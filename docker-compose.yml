@@ -40,7 +40,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+      - ./backend/migrations:/docker-entrypoint-initdb.d:ro
     networks: [ backend ]
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" ]
@@ -91,10 +91,8 @@ services:
     restart: unless-stopped
     environment:
       PORT: 8080
-      DATABASE_URL: postgresql://${LOCAL_POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@host.docker.internal:5432/${LOCAL_POSTGRES_DB:-sgp_isp}
+      DATABASE_URL: ${SUPABASE_DB_URL:?Configure SUPABASE_DB_URL no arquivo .env}
       GENIEACS_NBI_URL: http://genieacs:7557
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     expose:
       - "8080"
     networks:

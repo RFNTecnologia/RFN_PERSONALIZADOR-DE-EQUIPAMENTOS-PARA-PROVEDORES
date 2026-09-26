@@ -1,16 +1,22 @@
 import express from "express";
 import pg from "pg";
+import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const { Pool } = pg;
 const app = express();
 const port = Number(process.env.PORT || 8080);
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl) {
+  throw new Error("DATABASE_URL deve apontar para o PostgreSQL do Supabase");
+}
+const pool = new Pool({ connectionString: databaseUrl });
 const genieAcsNbiUrl = process.env.GENIEACS_NBI_URL || "http://genieacs:7557";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const migrationsDirectory = path.join(__dirname, "migrations");
 
 app.use(express.json({ limit: "5mb" }));
 app.use(express.static(path.join(__dirname, "../frontend")));
@@ -404,19 +410,16 @@ app.use((_req, res) => {
 });
 
 async function bootstrap() {
-  await pool.query(`alter table equipment add column if not exists acs_device_id varchar(220)`);
-  await pool.query(`create unique index if not exists equipment_acs_device_id_idx on equipment(acs_device_id) where acs_device_id is not null`);
-  await pool.query(`create table if not exists provider_settings (
-    id integer primary key,
-    company_name varchar(180) not null default 'Sua Empresa',
-    logo_url text, favicon_url text, support_phone varchar(40), support_whatsapp varchar(40),
-    portal_title varchar(180) not null default 'Configuração do Equipamento', portal_message text,
-    default_wifi_ssid varchar(120), default_wifi_ssid_5g varchar(120),
-    acs_url varchar(500), acs_username varchar(180), connection_request_path varchar(180),
-    reset_policy text not null default 'Após reset de fábrica, a recuperação do padrão personalizado depende do suporte do fabricante/firmware.',
-    created_at timestamptz not null default now(), updated_at timestamptz not null default now()
-  )`);
-  await pool.query(`insert into provider_settings(id, company_name, portal_title, portal_message) values(1,'Sua Empresa','Configuração do Equipamento','Este equipamento é gerenciado pelo provedor.') on conflict (id) do nothing`);
+  const migrationFiles = (await readdir(migrationsDirectory))
+    .filter((file) => file.endsWith(".sql"))
+    .sort();
+  if (migrationFiles.length === 0) {
+    throw new Error(`Nenhuma migration SQL encontrada em ${migrationsDirectory}`);
+  }
+  for (const file of migrationFiles) {
+    await pool.query(await readFile(path.join(migrationsDirectory, file), "utf8"));
+    console.log(`Migration aplicada: ${file}`);
+  }
   app.listen(port, () => console.log(`API ouvindo em ${port}`));
 }
 

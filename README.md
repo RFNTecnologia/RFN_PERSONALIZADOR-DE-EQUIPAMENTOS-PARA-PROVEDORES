@@ -4,7 +4,7 @@ Stack inicial:
 - GenieACS 1.2.x: ACS TR-069 (CWMP)
 - MongoDB: banco do GenieACS
 - Redis: fila/cache do GenieACS
-- PostgreSQL: banco da plataforma do provedor
+- Supabase PostgreSQL: banco da plataforma do provedor
 - Node.js/Express: API da plataforma
 - Nginx: proxy reverso
 - Docker Compose
@@ -18,7 +18,7 @@ Stack inicial:
 - UI do GenieACS na porta 3000, somente na rede Docker.
 - API própria em /api.
 - Cadastro inicial de clientes, equipamentos e perfis.
-- PostgreSQL persistente.
+- Supabase PostgreSQL para os dados da plataforma.
 - Estrutura para extensões/provisionamento por fabricante.
 - Nginx como ponto único de entrada.
 
@@ -39,12 +39,19 @@ Antes de produção:
 cp .env.example .env
 nano .env
 
+# Preencha SUPABASE_DB_URL com a URI PostgreSQL em Supabase > Connect.
+# Use Session pooler se a conexão direta não estiver disponível na sua rede.
+
 docker compose build
 docker compose up -d
 
 docker compose ps
 docker compose logs -f genieacs
 ```
+
+Na primeira inicialização, a API aplica os arquivos SQL de `backend/migrations`
+ao banco configurado. A chave secreta da API do Supabase não é a senha PostgreSQL:
+use a URI de conexão do banco e mantenha qualquer chave secreta fora do frontend.
 
 Acesse:
 - Portal/API: `http://SEU_IP/`
@@ -70,4 +77,5 @@ docker compose logs -f genieacs
 - `frontend/`: painel inicial
 - `genieacs/`: extensões e configuração
 - `nginx/`: proxy
-- `postgres/`: banco da plataforma
+- `backend/migrations/`: esquema e migrations do banco
+- `postgres/`: configuração opcional do PostgreSQL em contêiner
