@@ -1,3 +1,7 @@
+param(
+    [switch] $RotateAdminCredentials
+)
+
 $ErrorActionPreference = "Stop"
 
 $workspace = Split-Path -Parent $PSScriptRoot
@@ -76,6 +80,10 @@ if (-not (Get-EnvValue "API_SESSION_SECRET")) {
 }
 if (-not (Get-EnvValue "API_COOKIE_SECURE")) {
     Set-EnvValue "API_COOKIE_SECURE" "false"
+}
+if ($RotateAdminCredentials) {
+    Set-EnvValue "API_ADMIN_PASSWORD" (New-RandomHex 32)
+    Set-EnvValue "API_SESSION_SECRET" (New-RandomHex 64)
 }
 
 [System.IO.File]::WriteAllLines($envPath, $lines, [System.Text.UTF8Encoding]::new($false))
