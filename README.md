@@ -24,14 +24,14 @@ Stack inicial:
 
 ## Configuração inicial
 
-No PowerShell, copie o modelo e gere os segredos:
-
-```powershell
-Copy-Item .env.example .env
-.\scripts\generate-secrets.ps1
+ No PowerShell, copie o modelo e prepare a configuração local:
+ 
+ ```powershell
+ Copy-Item .env.example .env
+ ./scripts/bootstrap-local.ps1
 ```
 
-Copie os valores gerados para `.env` e defina `API_ADMIN_PASSWORD` com uma senha exclusiva de pelo menos 14 caracteres. Configure também `SUPABASE_DB_URL` com a URI PostgreSQL de Supabase > Connect. Use Session pooler se a conexão direta não funcionar na rede. Codifique caracteres especiais da senha conforme as regras de URI.
+O bootstrap preserva o `.env`, reutiliza a URI da API local anterior quando disponível e gera as credenciais administrativas ausentes sem mostrá-las. Confira `API_ADMIN_PASSWORD` no `.env` para entrar no painel. Para outro banco, preencha `DATABASE_URL` ou `SUPABASE_DB_URL` antes de executar. Uma URI Supabase pode usar Session pooler quando a conexão direta não funcionar; codifique caracteres especiais conforme as regras de URI.
 
 Na primeira inicialização, a API aplica os arquivos SQL de `backend/migrations`. As migrations precisam continuar idempotentes porque são verificadas a cada inicialização. A chave secreta da API do Supabase não é a senha PostgreSQL; não coloque chaves de serviço no frontend.
 
@@ -67,12 +67,29 @@ O TLS administrativo está preparado; o endpoint CWMP `7547` ainda não recebe c
 - [ ] DNS, certificado, renovação do certificado e firewall conferidos.
 - [ ] Login, logout, bloqueio de API anônima e bloqueio da UI GenieACS anônima testados.
 - [ ] `/health`, healthcheck da API, logs e alertas operacionais verificados.
-- [ ] Backups automáticos habilitados conforme o plano do Supabase e restauração testada; para PostgreSQL local, proteger também o volume `postgres_data`.
+- [x] Backup PostgreSQL local criptografado e agendado; restauração completa testada em instância descartável.
+- [ ] Cópia off-site dos backups configurada e restauração testada em outra máquina. O backup DPAPI atual só pode ser descriptografado pela conta Windows que o criou.
 - [ ] Um CPE de laboratório fez Inform, apareceu no GenieACS e teve parâmetros reais confirmados.
 - [ ] Perfis foram testados por modelo e firmware antes de qualquer aplicação em lote.
 - [ ] Procedimentos de rotação de senhas, recuperação e atualização documentados.
 
 O projeto não pode configurar DNS, emitir/renovar certificados, habilitar backups no projeto Supabase ou confirmar parâmetros de um CPE sem acesso a esses serviços e equipamentos. Não tente impedir reset físico: após reset, a personalização só pode ser reaplicada quando o equipamento voltar a alcançar o ACS e o firmware permitir.
+
+## Backup PostgreSQL local
+
+Para a conexão PostgreSQL local já configurada neste ambiente, o backup manual é:
+
+```powershell
+.\scripts\backup-database.ps1
+```
+
+Os dumps são verificados e cifrados com DPAPI para a conta Windows atual, em `%LOCALAPPDATA%\RFN_Personalizar-roteadores\backups`, com retenção local de 30 dias. Para instalar a tarefa diária às 02:15:
+
+```powershell
+.\scripts\backup-database.ps1 -InstallSchedule
+```
+
+A tarefa requer esta conta conectada e o Docker Desktop ativo. A restauração do backup inicial foi testada em um PostgreSQL descartável e isolado. DPAPI não substitui uma cópia off-site: configure armazenamento externo cifrado e um procedimento de recuperação em outra máquina antes de produção. Backups gerenciados do Supabase devem ser habilitados no próprio projeto quando `DATABASE_URL` apontar para Supabase.
 
 ## Primeiro teste com CPE
 
