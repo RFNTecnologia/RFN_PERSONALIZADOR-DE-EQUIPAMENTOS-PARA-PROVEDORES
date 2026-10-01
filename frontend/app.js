@@ -1,5 +1,5 @@
 const $ = id => document.getElementById(id);
-const esc = s => String(s ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+const esc = s => String(s ?? '').replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]));
 let equipment = [], profiles = [], acs = [], providerSettings = null;
 
 function showStatus(msg, ok = true) {
@@ -18,11 +18,60 @@ function showPage(name, btn) {
   if (name === 'acs') loadACS();
 }
 async function api(url, opt = {}) {
-  const r = await fetch(url, { headers: {'content-type':'application/json'}, ...opt });
+  const request = () => fetch(url, {
+    ...opt,
+    credentials: 'same-origin',
+    headers: { 'content-type': 'application/json', ...(opt.headers || {}) }
+  });
+  let r = await request();
+  if (r.status === 401 && !url.startsWith('/api/auth/')) {
+    await requestLogin();
+    r = await request();
+  }
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(d.error || 'Erro');
   return d;
 }
+
+async function logout() {
+  await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+  window.location.reload();
+}
+let loginPromise = null;
+let resolveLogin = null;
+
+function requestLogin() {
+  if (!loginPromise) {
+    loginPromise = new Promise(resolve => { resolveLogin = resolve; });
+    $('loginOverlay').classList.add('open');
+    $('loginError').textContent = '';
+    $('loginUsername').focus();
+  }
+  return loginPromise;
+}
+
+$('loginForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  $('loginError').textContent = '';
+  try {
+    const response = await fetch('/api/auth/login', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: $('loginUsername').value, password: $('loginPassword').value })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Não foi possível entrar.');
+    $('loginPassword').value = '';
+    $('loginOverlay').classList.remove('open');
+    const resolve = resolveLogin;
+    loginPromise = null;
+    resolveLogin = null;
+    resolve?.(true);
+  } catch (error) {
+    $('loginError').textContent = error.message;
+  }
+});
 async function loadAll() {
   try {
     const [d, e, p, s] = await Promise.all([api('/api/dashboard'), api('/api/equipment'), api('/api/profiles'), api('/api/provider-settings')]);
@@ -36,12 +85,12 @@ async function loadAll() {
 function renderEquipment() {
   const tb = $('equipmentTable');
   if (!equipment.length) { tb.innerHTML = '<tr><td colspan="9" class="empty">Nenhum equipamento cadastrado.</td></tr>'; return; }
-  tb.innerHTML = equipment.map(x => `<tr><td>${esc(x.manufacturer)}</td><td>${esc(x.model)}</td><td>${esc(x.equipment_type)}</td><td class="mono">${esc(x.serial_number)}</td><td class="mono">${esc(x.mac||'-')}</td><td>${esc(x.customer_name||'-')}</td><td>${esc(x.profile_name||'Sem perfil')}</td><td><span class="badge ${x.status==='online'?'online':'unknown'}">${esc(x.status)}</span></td><td><button class="secondary" onclick="equipmentActions(${x.id},'${esc(x.acs_device_id||'')}')">Abrir</button></td></tr>`).join('');
+  tb.innerHTML = equipment.map(x => `<tr><td>${esc(x.manufacturer)}</td><td>${esc(x.model)}</td><td>${esc(x.equipment_type)}</td><td class="mono">${esc(x.serial_number)}</td><td class="mono">${esc(x.mac || '-')}</td><td>${esc(x.customer_name || '-')}</td><td>${esc(x.profile_name || 'Sem perfil')}</td><td><span class="badge ${x.status === 'online' ? 'online' : 'unknown'}">${esc(x.status)}</span></td><td><button class="secondary" onclick="equipmentActions(${x.id},'${esc(x.acs_device_id || '')}')">Abrir</button></td></tr>`).join('');
 }
 function renderProfiles() {
   const g = $('profilesGrid');
   if (!profiles.length) { g.innerHTML = '<div class="card empty">Nenhum perfil.</div>'; return; }
-  g.innerHTML = profiles.map(p => `<div class="card"><h3 style="margin-top:0">${esc(p.name)}</h3><p class="hint">${esc(p.description||'')}</p><div class="kv"><span>Parâmetros TR-069</span><b>${Array.isArray(p.config?.parameterValues)?p.config.parameterValues.length:0}</b></div><pre class="hint mono" style="white-space:pre-wrap">${esc(JSON.stringify(p.config,null,2))}</pre><button onclick="editProfile(${p.id})">Editar</button></div>`).join('');
+  g.innerHTML = profiles.map(p => `<div class="card"><h3 style="margin-top:0">${esc(p.name)}</h3><p class="hint">${esc(p.description || '')}</p><div class="kv"><span>Parâmetros TR-069</span><b>${Array.isArray(p.config?.parameterValues) ? p.config.parameterValues.length : 0}</b></div><pre class="hint mono" style="white-space:pre-wrap">${esc(JSON.stringify(p.config, null, 2))}</pre><button onclick="editProfile(${p.id})">Editar</button></div>`).join('');
 }
 function renderProviderSettings() {
   const v = providerSettings || {};
@@ -73,19 +122,21 @@ async function loadProviderSettings() {
 }
 async function saveProviderSettings() {
   try {
-    providerSettings = await api('/api/provider-settings', {method:'PUT', body: JSON.stringify({
-      company_name:$('ispCompany').value.trim(), logo_url:$('ispLogo').value.trim(), favicon_url:null,
-      support_phone:$('ispPhone').value.trim(), support_whatsapp:$('ispWhatsapp').value.trim(),
-      portal_title:$('ispPortalTitle').value.trim(), portal_message:$('ispMessage').value.trim(),
-      default_wifi_ssid:$('ispSsid24').value.trim(), default_wifi_ssid_5g:$('ispSsid5').value.trim(),
-      acs_url:$('ispAcsUrl').value.trim(), acs_username:$('ispAcsUser').value.trim(),
-      connection_request_path:$('ispCrPath').value.trim(), reset_policy:$('ispResetPolicy').value.trim()
-    })});
+    providerSettings = await api('/api/provider-settings', {
+      method: 'PUT', body: JSON.stringify({
+        company_name: $('ispCompany').value.trim(), logo_url: $('ispLogo').value.trim(), favicon_url: null,
+        support_phone: $('ispPhone').value.trim(), support_whatsapp: $('ispWhatsapp').value.trim(),
+        portal_title: $('ispPortalTitle').value.trim(), portal_message: $('ispMessage').value.trim(),
+        default_wifi_ssid: $('ispSsid24').value.trim(), default_wifi_ssid_5g: $('ispSsid5').value.trim(),
+        acs_url: $('ispAcsUrl').value.trim(), acs_username: $('ispAcsUser').value.trim(),
+        connection_request_path: $('ispCrPath').value.trim(), reset_policy: $('ispResetPolicy').value.trim()
+      })
+    });
     renderProviderSettings();
     showStatus('Personalização ISP salva.');
   } catch (e) { showStatus(e.message, false); }
 }
-['ispCompany','ispPortalTitle','ispLogo','ispMessage','ispSsid24','ispSsid5'].forEach(id => {
+['ispCompany', 'ispPortalTitle', 'ispLogo', 'ispMessage', 'ispSsid24', 'ispSsid5'].forEach(id => {
   document.addEventListener('input', e => { if (e.target?.id === id) updateProviderPreview(); });
 });
 
@@ -94,7 +145,7 @@ async function checkACS() {
   catch { $('acsBadge').textContent = 'ACS: indisponível'; $('acsBadge').className = 'badge unknown'; }
 }
 async function syncACS() {
-  try { const d = await api('/api/acs/sync', {method:'POST', body:'{}'}); showStatus(`${d.synced} equipamento(s) sincronizado(s).`); await loadAll(); }
+  try { const d = await api('/api/acs/sync', { method: 'POST', body: '{}' }); showStatus(`${d.synced} equipamento(s) sincronizado(s).`); await loadAll(); }
   catch (e) { showStatus(e.message, false); }
 }
 async function loadACS() {
@@ -105,31 +156,31 @@ async function loadACS() {
       const model = d?._deviceId?._ProductClass || d?.Device?.DeviceInfo?.ModelName?.value || d?.InternetGatewayDevice?.DeviceInfo?.ModelName?.value || '-';
       const ser = d?._deviceId?._SerialNumber || d?.Device?.DeviceInfo?.SerialNumber?.value || d?.InternetGatewayDevice?.DeviceInfo?.SerialNumber?.value || '-';
       const status = d?._lastInform ? 'online' : 'unknown';
-      return `<tr><td class="mono">${esc(d._id)}</td><td>${esc(man)}</td><td>${esc(model)}</td><td class="mono">${esc(ser)}</td><td>${esc(d._lastInform||'-')}</td><td><span class="badge ${status==='online'?'online':'unknown'}">${status}</span> <button onclick="refreshDevice('${esc(d._id)}')">Atualizar</button></td></tr>`;
+      return `<tr><td class="mono">${esc(d._id)}</td><td>${esc(man)}</td><td>${esc(model)}</td><td class="mono">${esc(ser)}</td><td>${esc(d._lastInform || '-')}</td><td><span class="badge ${status === 'online' ? 'online' : 'unknown'}">${status}</span> <button onclick="refreshDevice('${esc(d._id)}')">Atualizar</button></td></tr>`;
     }).join('') || '<tr><td colspan="6" class="empty">Nenhum CPE encontrado no ACS.</td></tr>';
   } catch (e) { $('acsTable').innerHTML = `<tr><td colspan="6" class="empty">${esc(e.message)}</td></tr>`; }
 }
 async function refreshDevice(id) {
-  try { await api(`/api/acs/devices/${encodeURIComponent(id)}/task`, {method:'POST', body:JSON.stringify({task:{name:'refreshObject',objectName:''},connection_request:true})}); showStatus('Solicitação enviada ao CPE. Aguarde o próximo Inform para atualizar os valores.'); }
+  try { await api(`/api/acs/devices/${encodeURIComponent(id)}/task`, { method: 'POST', body: JSON.stringify({ task: { name: 'refreshObject', objectName: '' }, connection_request: true }) }); showStatus('Solicitação enviada ao CPE. Aguarde o próximo Inform para atualizar os valores.'); }
   catch (e) { showStatus(e.message, false); }
 }
 function openModal(html) { $('modalContent').innerHTML = html; $('modal').classList.add('open'); }
 function closeModal(e) { if (!e || e.target === $('modal')) $('modal').classList.remove('open'); }
-function openEquipmentModal() { openModal(`<h2>Novo equipamento</h2><div class="form"><div class="two"><div><label>Fabricante</label><input id="mMan"></div><div><label>Modelo</label><input id="mModel"></div></div><div class="two"><div><label>Tipo</label><select id="mType"><option>router</option><option>onu</option><option>ont</option></select></div><div><label>Serial</label><input id="mSerial"></div></div><div class="two"><div><label>MAC</label><input id="mMac"></div><div><label>Perfil</label><select id="mProfile"><option value="">Sem perfil</option>${profiles.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div></div><div class="actions"><button onclick="saveEquipment()">Salvar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div></div>`); }
-async function saveEquipment() { try { await api('/api/equipment',{method:'POST',body:JSON.stringify({manufacturer:$('mMan').value,model:$('mModel').value,equipment_type:$('mType').value,serial_number:$('mSerial').value,mac:$('mMac').value,profile_id:$('mProfile').value||null})}); closeModal(); showStatus('Equipamento cadastrado.'); await loadAll(); } catch(e){ showStatus(e.message,false); } }
-function openProfileModal(p={}) { openModal(`<h2>${p.id?'Editar':'Novo'} perfil</h2><div class="form"><div><label>Nome</label><input id="pName" value="${esc(p.name||'')}"></div><div><label>Descrição</label><input id="pDesc" value="${esc(p.description||'')}"></div><div><label>Configuração JSON</label><textarea id="pConfig" rows="16" class="mono">${esc(JSON.stringify(p.config||{parameterValues:[]},null,2))}</textarea><div class="hint">Use somente parâmetros efetivamente existentes no firmware.</div></div><div class="actions"><button onclick="saveProfile(${p.id||''})">Salvar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div></div>`); }
-function editProfile(id) { openProfileModal(profiles.find(p=>String(p.id)===String(id))||{}); }
-async function saveProfile(id) { try { let config; try { config=JSON.parse($('pConfig').value); } catch { throw new Error('JSON do perfil inválido'); } const body=JSON.stringify({name:$('pName').value,description:$('pDesc').value,config}); await api(id?`/api/profiles/${id}`:'/api/profiles',{method:id?'PUT':'POST',body}); closeModal(); showStatus('Perfil salvo.'); await loadAll(); } catch(e){ showStatus(e.message,false); } }
+function openEquipmentModal() { openModal(`<h2>Novo equipamento</h2><div class="form"><div class="two"><div><label>Fabricante</label><input id="mMan"></div><div><label>Modelo</label><input id="mModel"></div></div><div class="two"><div><label>Tipo</label><select id="mType"><option>router</option><option>onu</option><option>ont</option></select></div><div><label>Serial</label><input id="mSerial"></div></div><div class="two"><div><label>MAC</label><input id="mMac"></div><div><label>Perfil</label><select id="mProfile"><option value="">Sem perfil</option>${profiles.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div></div><div class="actions"><button onclick="saveEquipment()">Salvar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div></div>`); }
+async function saveEquipment() { try { await api('/api/equipment', { method: 'POST', body: JSON.stringify({ manufacturer: $('mMan').value, model: $('mModel').value, equipment_type: $('mType').value, serial_number: $('mSerial').value, mac: $('mMac').value, profile_id: $('mProfile').value || null }) }); closeModal(); showStatus('Equipamento cadastrado.'); await loadAll(); } catch (e) { showStatus(e.message, false); } }
+function openProfileModal(p = {}) { openModal(`<h2>${p.id ? 'Editar' : 'Novo'} perfil</h2><div class="form"><div><label>Nome</label><input id="pName" value="${esc(p.name || '')}"></div><div><label>Descrição</label><input id="pDesc" value="${esc(p.description || '')}"></div><div><label>Configuração JSON</label><textarea id="pConfig" rows="16" class="mono">${esc(JSON.stringify(p.config || { parameterValues: [] }, null, 2))}</textarea><div class="hint">Use somente parâmetros efetivamente existentes no firmware.</div></div><div class="actions"><button onclick="saveProfile(${p.id || ''})">Salvar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div></div>`); }
+function editProfile(id) { openProfileModal(profiles.find(p => String(p.id) === String(id)) || {}); }
+async function saveProfile(id) { try { let config; try { config = JSON.parse($('pConfig').value); } catch { throw new Error('JSON do perfil inválido'); } const body = JSON.stringify({ name: $('pName').value, description: $('pDesc').value, config }); await api(id ? `/api/profiles/${id}` : '/api/profiles', { method: id ? 'PUT' : 'POST', body }); closeModal(); showStatus('Perfil salvo.'); await loadAll(); } catch (e) { showStatus(e.message, false); } }
 
 function equipmentActions(id, acsId) {
   const e = equipment.find(x => String(x.id) === String(id)); if (!e) { showStatus('Equipamento não encontrado na lista.', false); return; }
-  const options = profiles.map(p => `<option value="${p.id}" ${String(p.id)===String(e.profile_id)?'selected':''}>${esc(p.name)}</option>`).join('');
-  const identity = `<div class="device-head"><div><h2 style="margin:0">${esc(e.manufacturer)} ${esc(e.model)}</h2><div class="hint">Serial <span class="mono">${esc(e.serial_number)}</span></div></div><span class="badge ${e.status==='online'?'online':'unknown'}">${esc(e.status)}</span></div>`;
-  openModal(`${identity}<p class="hint">ACS ID: <span class="mono">${esc(acsId||'não vinculado')}</span></p><div class="device-tabs"><button class="device-tab active" onclick="showDeviceTab('info',this,${id},'${esc(acsId||'')}')">Informações</button><button class="device-tab" onclick="showDeviceTab('params',this,${id},'${esc(acsId||'')}')">Parâmetros</button><button class="device-tab" onclick="showDeviceTab('wifi',this,${id},'${esc(acsId||'')}')">Wi-Fi</button><button class="device-tab" onclick="showDeviceTab('wan',this,${id},'${esc(acsId||'')}')">WAN</button><button class="device-tab" onclick="showDeviceTab('tr069',this,${id},'${esc(acsId||'')}')">TR-069</button><button class="device-tab" onclick="showDeviceTab('provision',this,${id},'${esc(acsId||'')}')">Provisionamento</button></div><div id="deviceTabBody"><div class="card"><div class="hint">Carregando dados do equipamento...</div></div></div><div class="device-actions"><div><label>Perfil</label><select id="eProfile"><option value="">Sem perfil</option>${options}</select></div><div class="actions"><button onclick="assignProfile(${id})">Associar perfil</button>${acsId?`<button class="ok" onclick="applyProfile('${esc(acsId)}')">Aplicar perfil</button><button class="secondary" onclick="refreshDevice('${esc(acsId)}')">Atualizar do CPE</button>`:''}</div></div>`);
+  const options = profiles.map(p => `<option value="${p.id}" ${String(p.id) === String(e.profile_id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+  const identity = `<div class="device-head"><div><h2 style="margin:0">${esc(e.manufacturer)} ${esc(e.model)}</h2><div class="hint">Serial <span class="mono">${esc(e.serial_number)}</span></div></div><span class="badge ${e.status === 'online' ? 'online' : 'unknown'}">${esc(e.status)}</span></div>`;
+  openModal(`${identity}<p class="hint">ACS ID: <span class="mono">${esc(acsId || 'não vinculado')}</span></p><div class="device-tabs"><button class="device-tab active" onclick="showDeviceTab('info',this,${id},'${esc(acsId || '')}')">Informações</button><button class="device-tab" onclick="showDeviceTab('params',this,${id},'${esc(acsId || '')}')">Parâmetros</button><button class="device-tab" onclick="showDeviceTab('wifi',this,${id},'${esc(acsId || '')}')">Wi-Fi</button><button class="device-tab" onclick="showDeviceTab('wan',this,${id},'${esc(acsId || '')}')">WAN</button><button class="device-tab" onclick="showDeviceTab('tr069',this,${id},'${esc(acsId || '')}')">TR-069</button><button class="device-tab" onclick="showDeviceTab('provision',this,${id},'${esc(acsId || '')}')">Provisionamento</button></div><div id="deviceTabBody"><div class="card"><div class="hint">Carregando dados do equipamento...</div></div></div><div class="device-actions"><div><label>Perfil</label><select id="eProfile"><option value="">Sem perfil</option>${options}</select></div><div class="actions"><button onclick="assignProfile(${id})">Associar perfil</button>${acsId ? `<button class="ok" onclick="applyProfile('${esc(acsId)}')">Aplicar perfil</button><button class="secondary" onclick="refreshDevice('${esc(acsId)}')">Atualizar do CPE</button>` : ''}</div></div>`);
   if (acsId) loadDeviceParameters(id, acsId, 'info'); else showDeviceEmpty('Este equipamento não está vinculado a um dispositivo do GenieACS.');
 }
 async function showDeviceTab(tab, btn, id, acsId) {
-  document.querySelectorAll('.device-tab').forEach(x=>x.classList.remove('active')); btn?.classList.add('active');
+  document.querySelectorAll('.device-tab').forEach(x => x.classList.remove('active')); btn?.classList.add('active');
   if (!acsId) { showDeviceEmpty('Este equipamento não está vinculado a um dispositivo do GenieACS.'); return; }
   await loadDeviceParameters(id, acsId, tab);
 }
@@ -172,7 +223,7 @@ function parameterSearchTerms(path) {
 
 function parameterRows(list) {
   if (!list?.length) return '<div class="empty">Nenhum parâmetro dessa categoria foi coletado ainda.</div>';
-  const rows = [...list].sort((a,b)=>String(a.path||'').localeCompare(String(b.path||''))).map(x=>{
+  const rows = [...list].sort((a, b) => String(a.path || '').localeCompare(String(b.path || ''))).map(x => {
     const searchText = `${parameterSearchTerms(x.path)} ${valueText(x.value)}`;
     return `<div class="param-row" data-search="${esc(searchText)}"><div class="mono param-path">${esc(x.path)}</div><div class="param-value">${esc(valueText(x.value))}</div></div>`;
   }).join('');
@@ -236,13 +287,13 @@ async function loadDeviceParameters(id, acsId, tab) {
     const d = await api(`/api/acs/devices/${encodeURIComponent(acsId)}/parameters`);
     if (tab === 'info') {
       const di = d.identity || {};
-      $('deviceTabBody').innerHTML = `<div class="grid"><div class="card"><div class="title">Fabricante</div><div class="big-value">${esc(di._Manufacturer||'—')}</div></div><div class="card"><div class="title">Modelo / Product Class</div><div class="big-value">${esc(di._ProductClass||'—')}</div></div><div class="card"><div class="title">Serial</div><div class="big-value mono">${esc(di._SerialNumber||'—')}</div></div><div class="card"><div class="title">OUI</div><div class="big-value mono">${esc(di._OUI||'—')}</div></div></div>${sectionCard('Informações coletadas',d.categories.info)}<div class="card"><div class="kv"><span>Último Inform</span><b class="mono">${esc(d.lastInform||'—')}</b></div><div class="kv"><span>Último boot</span><b class="mono">${esc(d.lastBoot||'—')}</b></div><div class="kv"><span>Parâmetros em cache</span><b>${esc(d.parameterCount)}</b></div></div>`;
-    } else if (tab === 'wifi') $('deviceTabBody').innerHTML = `${sectionCard('Wi-Fi / WLAN',d.categories.wifi)}<div class="hint-block">Os parâmetros exibidos são somente os que o GenieACS já possui em cache para este CPE.</div>`;
-    else if (tab === 'wan') $('deviceTabBody').innerHTML = `${sectionCard('WAN / Internet / VLAN / IP',d.categories.wan)}<div class="hint-block">Os parâmetros exibidos são somente os que o GenieACS já possui em cache para este CPE.</div>`;
-    else if (tab === 'tr069') $('deviceTabBody').innerHTML = `${sectionCard('Gerência TR-069 / ManagementServer',d.categories.tr069)}<div class="hint-block">Use estes nomes exatos ao montar perfis de provisionamento para o modelo.</div>`;
+      $('deviceTabBody').innerHTML = `<div class="grid"><div class="card"><div class="title">Fabricante</div><div class="big-value">${esc(di._Manufacturer || '—')}</div></div><div class="card"><div class="title">Modelo / Product Class</div><div class="big-value">${esc(di._ProductClass || '—')}</div></div><div class="card"><div class="title">Serial</div><div class="big-value mono">${esc(di._SerialNumber || '—')}</div></div><div class="card"><div class="title">OUI</div><div class="big-value mono">${esc(di._OUI || '—')}</div></div></div>${sectionCard('Informações coletadas', d.categories.info)}<div class="card"><div class="kv"><span>Último Inform</span><b class="mono">${esc(d.lastInform || '—')}</b></div><div class="kv"><span>Último boot</span><b class="mono">${esc(d.lastBoot || '—')}</b></div><div class="kv"><span>Parâmetros em cache</span><b>${esc(d.parameterCount)}</b></div></div>`;
+    } else if (tab === 'wifi') $('deviceTabBody').innerHTML = `${sectionCard('Wi-Fi / WLAN', d.categories.wifi)}<div class="hint-block">Os parâmetros exibidos são somente os que o GenieACS já possui em cache para este CPE.</div>`;
+    else if (tab === 'wan') $('deviceTabBody').innerHTML = `${sectionCard('WAN / Internet / VLAN / IP', d.categories.wan)}<div class="hint-block">Os parâmetros exibidos são somente os que o GenieACS já possui em cache para este CPE.</div>`;
+    else if (tab === 'tr069') $('deviceTabBody').innerHTML = `${sectionCard('Gerência TR-069 / ManagementServer', d.categories.tr069)}<div class="hint-block">Use estes nomes exatos ao montar perfis de provisionamento para o modelo.</div>`;
     else if (tab === 'provision') renderProvisionForm(d.values || [], acsId);
-    else $('deviceTabBody').innerHTML = `${sectionCard('Todos os parâmetros coletados',d.values)}`;
-  } catch(e) { $('deviceTabBody').innerHTML = `<div class="card empty">${esc(e.message)}</div>`; }
+    else $('deviceTabBody').innerHTML = `${sectionCard('Todos os parâmetros coletados', d.values)}`;
+  } catch (e) { $('deviceTabBody').innerHTML = `<div class="card empty">${esc(e.message)}</div>`; }
 }
 function findParameterPath(values, needles) {
   const arr = (values || []).map(x => String(x.path || ''));
@@ -253,30 +304,30 @@ function findParameterPath(values, needles) {
   return '';
 }
 function renderProvisionForm(values, acsId) {
-  const pppoeUser = findParameterPath(values, ['pppoe.username','pppoe.user','username']);
-  const pppoePass = findParameterPath(values, ['pppoe.password','pppoe.pass','password']);
-  const vlan = findParameterPath(values, ['vlanid','vlan']);
+  const pppoeUser = findParameterPath(values, ['pppoe.username', 'pppoe.user', 'username']);
+  const pppoePass = findParameterPath(values, ['pppoe.password', 'pppoe.pass', 'password']);
+  const vlan = findParameterPath(values, ['vlanid', 'vlan']);
   const mtu = findParameterPath(values, ['mtu']);
-  const dns = findParameterPath(values, ['dns','DNSServer']);
+  const dns = findParameterPath(values, ['dns', 'DNSServer']);
   const ssid = findParameterPath(values, ['ssid']);
-  const wifiPass = findParameterPath(values, ['pre-sharedkey','wifikey','wirelesskey']);
+  const wifiPass = findParameterPath(values, ['pre-sharedkey', 'wifikey', 'wirelesskey']);
   const fields = [
-    ['pppoeUserPath','Caminho PPPoE — usuário',pppoeUser,'Ex.: ...Username'],
-    ['pppoeUser','Usuário PPPoE','', 'Digite o usuário do cliente'],
-    ['pppoePassPath','Caminho PPPoE — senha',pppoePass,'Ex.: ...Password'],
-    ['pppoePass','Senha PPPoE','', 'Digite a senha do cliente'],
-    ['vlanPath','Caminho VLAN',vlan,'Ex.: ...VLANID'],
-    ['vlanValue','VLAN','', 'Ex.: 100'],
-    ['mtuPath','Caminho MTU',mtu,'Ex.: ...MTU'],
-    ['mtuValue','MTU','1492','1492 normalmente; confirme no seu cenário'],
-    ['dnsPath','Caminho DNS',dns,'Ex.: ...DNSServers'],
-    ['dnsValue','DNS','8.8.8.8','Separe múltiplos DNS conforme o firmware'],
-    ['ssidPath','Caminho SSID',ssid,'Ex.: ...SSID'],
-    ['ssidValue','SSID','', 'Nome do Wi-Fi'],
-    ['wifiPassPath','Caminho senha Wi-Fi',wifiPass,'Ex.: ...PreSharedKey'],
-    ['wifiPass','Senha Wi-Fi','', 'Senha da rede']
+    ['pppoeUserPath', 'Caminho PPPoE — usuário', pppoeUser, 'Ex.: ...Username'],
+    ['pppoeUser', 'Usuário PPPoE', '', 'Digite o usuário do cliente'],
+    ['pppoePassPath', 'Caminho PPPoE — senha', pppoePass, 'Ex.: ...Password'],
+    ['pppoePass', 'Senha PPPoE', '', 'Digite a senha do cliente'],
+    ['vlanPath', 'Caminho VLAN', vlan, 'Ex.: ...VLANID'],
+    ['vlanValue', 'VLAN', '', 'Ex.: 100'],
+    ['mtuPath', 'Caminho MTU', mtu, 'Ex.: ...MTU'],
+    ['mtuValue', 'MTU', '1492', '1492 normalmente; confirme no seu cenário'],
+    ['dnsPath', 'Caminho DNS', dns, 'Ex.: ...DNSServers'],
+    ['dnsValue', 'DNS', '8.8.8.8', 'Separe múltiplos DNS conforme o firmware'],
+    ['ssidPath', 'Caminho SSID', ssid, 'Ex.: ...SSID'],
+    ['ssidValue', 'SSID', '', 'Nome do Wi-Fi'],
+    ['wifiPassPath', 'Caminho senha Wi-Fi', wifiPass, 'Ex.: ...PreSharedKey'],
+    ['wifiPass', 'Senha Wi-Fi', '', 'Senha da rede']
   ];
-  const html = fields.map(([id,label,val,ph]) => `<div><label>${esc(label)}</label><input id="prov_${id}" value="${esc(val)}" placeholder="${esc(ph)}"></div>`).join('');
+  const html = fields.map(([id, label, val, ph]) => `<div><label>${esc(label)}</label><input id="prov_${id}" value="${esc(val)}" placeholder="${esc(ph)}"></div>`).join('');
   $('deviceTabBody').innerHTML = `<div class="card">
     <h3 style="margin-top:0">Provisionamento manual do CPE</h3>
     <p class="hint">Os campos de valor são editáveis. Os caminhos são preenchidos automaticamente quando o parâmetro correspondente já foi coletado; confirme-os antes de enviar. O sistema não inventa parâmetros do firmware.</p>
@@ -287,22 +338,22 @@ function renderProvisionForm(values, acsId) {
 }
 async function sendProvisioning(acsId) {
   const pairs = [
-    ['prov_pppoeUserPath','prov_pppoeUser'],['prov_pppoePassPath','prov_pppoePass'],
-    ['prov_vlanPath','prov_vlanValue'],['prov_mtuPath','prov_mtuValue'],
-    ['prov_dnsPath','prov_dnsValue'],['prov_ssidPath','prov_ssidValue'],
-    ['prov_wifiPassPath','prov_wifiPass']
+    ['prov_pppoeUserPath', 'prov_pppoeUser'], ['prov_pppoePassPath', 'prov_pppoePass'],
+    ['prov_vlanPath', 'prov_vlanValue'], ['prov_mtuPath', 'prov_mtuValue'],
+    ['prov_dnsPath', 'prov_dnsValue'], ['prov_ssidPath', 'prov_ssidValue'],
+    ['prov_wifiPassPath', 'prov_wifiPass']
   ];
   const parameterValues = [];
-  for (const [pathId,valueId] of pairs) {
+  for (const [pathId, valueId] of pairs) {
     const path = $(pathId)?.value.trim(); const value = $(valueId)?.value;
     if (path && value !== '') parameterValues.push([path, value]);
   }
   if (!parameterValues.length) { showStatus('Informe pelo menos um caminho de parâmetro e seu valor.', false); return; }
   try {
-    await api(`/api/acs/devices/${encodeURIComponent(acsId)}/provision`, {method:'POST', body:JSON.stringify({parameterValues})});
+    await api(`/api/acs/devices/${encodeURIComponent(acsId)}/provision`, { method: 'POST', body: JSON.stringify({ parameterValues }) });
     showStatus(`${parameterValues.length} parâmetro(s) enviado(s) ao GenieACS/CPE.`);
-  } catch(e) { showStatus(e.message, false); }
+  } catch (e) { showStatus(e.message, false); }
 }
-async function assignProfile(id) { try { await api(`/api/equipment/${id}`,{method:'PATCH',body:JSON.stringify({profile_id:$('eProfile').value||null})}); closeModal(); showStatus('Perfil associado.'); await loadAll(); } catch(e){ showStatus(e.message,false); } }
-async function applyProfile(acsId) { try { const e=equipment.find(x=>x.acs_device_id===acsId); if(!e?.profile_id) throw new Error('Associe um perfil antes de aplicar.'); await api(`/api/acs/devices/${encodeURIComponent(acsId)}/apply-profile`,{method:'POST',body:JSON.stringify({profile_id:e.profile_id})}); showStatus('Perfil enviado ao GenieACS/CPE.'); } catch(e){ showStatus(e.message,false); } }
+async function assignProfile(id) { try { await api(`/api/equipment/${id}`, { method: 'PATCH', body: JSON.stringify({ profile_id: $('eProfile').value || null }) }); closeModal(); showStatus('Perfil associado.'); await loadAll(); } catch (e) { showStatus(e.message, false); } }
+async function applyProfile(acsId) { try { const e = equipment.find(x => x.acs_device_id === acsId); if (!e?.profile_id) throw new Error('Associe um perfil antes de aplicar.'); await api(`/api/acs/devices/${encodeURIComponent(acsId)}/apply-profile`, { method: 'POST', body: JSON.stringify({ profile_id: e.profile_id }) }); showStatus('Perfil enviado ao GenieACS/CPE.'); } catch (e) { showStatus(e.message, false); } }
 loadAll();

@@ -3,11 +3,23 @@ import pg from "pg";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHmac, timingSafeEqual } from "node:crypto";
 
 const { Pool } = pg;
 const app = express();
+app.set("trust proxy", 1);
 const port = Number(process.env.PORT || 8080);
 const databaseUrl = process.env.DATABASE_URL;
+const adminUsername = process.env.API_ADMIN_USERNAME;
+const adminPassword = process.env.API_ADMIN_PASSWORD;
+const sessionSecret = process.env.API_SESSION_SECRET;
+const cookieSecure = process.env.API_COOKIE_SECURE === "true";
+const sessionLifetimeSeconds = 8 * 60 * 60;
+const loginAttempts = new Map();
+
+if (!adminUsername || !adminPassword || adminPassword.length < 14 || !sessionSecret || sessionSecret.length < 32) {
+  throw new Error("Configure API_ADMIN_USERNAME, API_ADMIN_PASSWORD (mínimo 14 caracteres) e API_SESSION_SECRET (mínimo 32 caracteres)");
+}
 if (!databaseUrl) {
   throw new Error("DATABASE_URL deve apontar para o PostgreSQL do Supabase");
 }
@@ -38,10 +50,93 @@ async function nbiFetch(endpoint, options = {}) {
   return data;
 }
 
+
+function constantTimeEqual(left, right) {
+  const leftBuffer = Buffer.from(String(left));
+  const rightBuffer = Buffer.from(String(right));
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function sessionCookie(req) {
+  const cookies = req.headers.cookie?.split(";") || [];
+  const session = cookies.map((cookie) => cookie.trim()).find((cookie) => cookie.startsWith("rfn_session="));
+  return session?.slice("rfn_session=".length) || "";
+}
+
+function validSession(req) {
+  const token = sessionCookie(req);
+  const separator = token.lastIndexOf(".");
+  if (separator < 1) return false;
+
+  const payload = token.slice(0, separator);
+  const signature = token.slice(separator + 1);
+  const expected = createHmac("sha256", sessionSecret).update(payload).digest("base64url");
+  if (!constantTimeEqual(signature, expected)) return false;
+
+  try {
+    const claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    return claims.sub === adminUsername && Number(claims.exp) > Math.floor(Date.now() / 1000);
+  } catch {
+    return false;
+  }
+}
+
+function requireAdminSession(req, res, next) {
+  if (!validSession(req)) return res.status(401).json({ error: "Autenticação necessária" });
+  next();
+}
+app.use("/api", (_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  next();
+});
+
+app.post("/api/auth/login", (req, res) => {
+  const now = Date.now();
+  const ip = req.ip || "unknown";
+  for (const [address, entry] of loginAttempts) {
+    if (entry.expiresAt <= now) loginAttempts.delete(address);
+  }
+  let attempt = loginAttempts.get(ip);
+  if (!attempt || attempt.expiresAt <= now) {
+    if (loginAttempts.size >= 10000) return res.status(429).json({ error: "Muitas tentativas. Aguarde e tente novamente." });
+    attempt = { count: 0, expiresAt: now + 15 * 60 * 1000 };
+    loginAttempts.set(ip, attempt);
+  }
+  if (attempt.count >= 5) return res.status(429).json({ error: "Muitas tentativas. Aguarde 15 minutos." });
+
+  const usernameMatches = constantTimeEqual(req.body?.username || "", adminUsername);
+  const passwordMatches = constantTimeEqual(req.body?.password || "", adminPassword);
+  if (!usernameMatches || !passwordMatches) {
+    attempt.count += 1;
+    return res.status(401).json({ error: "Usuário ou senha inválidos" });
+  }
+
+  loginAttempts.delete(ip);
+  const claims = Buffer.from(JSON.stringify({
+    sub: adminUsername,
+    exp: Math.floor(now / 1000) + sessionLifetimeSeconds,
+  })).toString("base64url");
+  const signature = createHmac("sha256", sessionSecret).update(claims).digest("base64url");
+  const secure = cookieSecure ? "; Secure" : "";
+  res.setHeader("Set-Cookie", `rfn_session=${claims}.${signature}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${sessionLifetimeSeconds}${secure}`);
+  res.json({ ok: true, username: adminUsername });
+});
+
+app.post("/api/auth/logout", (_req, res) => {
+  const secure = cookieSecure ? "; Secure" : "";
+  res.setHeader("Set-Cookie", `rfn_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}`);
+  res.status(204).end();
+});
+
+app.use("/api", requireAdminSession);
+
+app.get("/api/auth/me", (_req, res) => {
+  res.json({ authenticated: true, username: adminUsername });
+});
+
 async function syncAcsDevices() {
   const devices = await nbiFetch("/devices/", { headers: {} });
   if (!Array.isArray(devices)) return [];
-
   for (const d of devices) {
     const id = d._id || null;
     if (!id) continue;

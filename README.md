@@ -22,54 +22,65 @@ Stack inicial:
 - Estrutura para extensões/provisionamento por fabricante.
 - Nginx como ponto único de entrada.
 
-## IMPORTANTE
+## Configuração inicial
 
-Antes de produção:
-1. Troque todas as senhas no `.env`.
-2. Gere um `GENIEACS_UI_JWT_SECRET` forte.
-3. Configure DNS e HTTPS.
-4. Não exponha MongoDB, Redis, PostgreSQL ou NBI diretamente à Internet.
-5. Configure autenticação/ACL da API.
-6. Valide os parâmetros TR-069 efetivamente suportados por cada firmware.
-7. Não use este projeto para bloquear o reset físico do equipamento; o objetivo é reprovisionar depois do reset quando o CPE voltar a alcançar o ACS.
+No PowerShell, copie o modelo e gere os segredos:
 
-## Instalação
+```powershell
+Copy-Item .env.example .env
+.\scripts\generate-secrets.ps1
+```
 
-```bash
-cp .env.example .env
-nano .env
+Copie os valores gerados para `.env` e defina `API_ADMIN_PASSWORD` com uma senha exclusiva de pelo menos 14 caracteres. Configure também `SUPABASE_DB_URL` com a URI PostgreSQL de Supabase > Connect. Use Session pooler se a conexão direta não funcionar na rede. Codifique caracteres especiais da senha conforme as regras de URI.
 
-# Preencha SUPABASE_DB_URL com a URI PostgreSQL em Supabase > Connect.
-# Use Session pooler se a conexão direta não estiver disponível na sua rede.
+Na primeira inicialização, a API aplica os arquivos SQL de `backend/migrations`. As migrations precisam continuar idempotentes porque são verificadas a cada inicialização. A chave secreta da API do Supabase não é a senha PostgreSQL; não coloque chaves de serviço no frontend.
 
+Valide e inicie o ambiente de desenvolvimento:
+
+```powershell
+docker compose config
 docker compose build
 docker compose up -d
-
 docker compose ps
-docker compose logs -f genieacs
+docker compose logs -f genieacs api nginx
 ```
 
-Na primeira inicialização, a API aplica os arquivos SQL de `backend/migrations`
-ao banco configurado. A chave secreta da API do Supabase não é a senha PostgreSQL:
-use a URI de conexão do banco e mantenha qualquer chave secreta fora do frontend.
+O painel solicita o usuário e a senha configurados em `API_ADMIN_USERNAME` e `API_ADMIN_PASSWORD`. Entre primeiro no painel para abrir a interface `/genieacs/`; ambas exigem a mesma sessão. Há um usuário administrativo único; não há perfis ou contas individuais nesta fase.
 
-Acesse:
-- Portal/API: `http://SEU_IP/`
-- GenieACS UI: `http://SEU_IP/genieacs/`
-- ACS/CWMP para CPE: `http://SEU_DOMINIO:7547/`
+## Produção com HTTPS
 
-Em produção, use HTTPS para a interface administrativa e, quando suportado/configurado no CPE, CWMP sobre HTTPS.
+Configure DNS para o servidor e obtenha um certificado TLS. Coloque a cadeia em `certs/fullchain.pem` e a chave privada em `certs/privkey.pem`; a pasta `certs/` é ignorada pelo Git. Depois valide e inicie com o overlay:
 
-## Primeiro teste
-
-1. Cadastre um equipamento na API ou pelo SQL.
-2. Configure no CPE o ACS URL para `http(s)://SEU_DOMINIO:7547/`.
-3. Ligue o equipamento à Internet.
-4. Verifique:
-```bash
-docker compose logs -f genieacs
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.production.yml config
+docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --build
 ```
-5. Abra a UI do GenieACS e confirme o CPE.
+
+O overlay redireciona HTTP para HTTPS e ativa cookies `Secure`. Sem os arquivos de certificado o Nginx de produção não inicia. No firewall, libere apenas `80`, `443` e `7547` conforme a necessidade. O NBI `7557`, File Server `7567`, UI interna `3000`, MongoDB, Redis e PostgreSQL não são publicados no host.
+
+O TLS administrativo está preparado; o endpoint CWMP `7547` ainda não recebe certificado TLS nesta configuração. Não anuncie `https://` no ACS URL até configurar e testar TLS para CWMP no GenieACS/CPE. Restrinja a porta CWMP por firewall às redes dos CPEs sempre que possível.
+
+## Checklist de liberação
+
+- [ ] `docker compose config` e `docker compose ... config` com overlay de produção terminam sem erro.
+- [ ] Segredos exclusivos definidos no `.env`; o arquivo não é versionado nem incluído em imagens.
+- [ ] DNS, certificado, renovação do certificado e firewall conferidos.
+- [ ] Login, logout, bloqueio de API anônima e bloqueio da UI GenieACS anônima testados.
+- [ ] `/health`, healthcheck da API, logs e alertas operacionais verificados.
+- [ ] Backups automáticos habilitados conforme o plano do Supabase e restauração testada; para PostgreSQL local, proteger também o volume `postgres_data`.
+- [ ] Um CPE de laboratório fez Inform, apareceu no GenieACS e teve parâmetros reais confirmados.
+- [ ] Perfis foram testados por modelo e firmware antes de qualquer aplicação em lote.
+- [ ] Procedimentos de rotação de senhas, recuperação e atualização documentados.
+
+O projeto não pode configurar DNS, emitir/renovar certificados, habilitar backups no projeto Supabase ou confirmar parâmetros de um CPE sem acesso a esses serviços e equipamentos. Não tente impedir reset físico: após reset, a personalização só pode ser reaplicada quando o equipamento voltar a alcançar o ACS e o firmware permitir.
+
+## Primeiro teste com CPE
+
+1. Acesse o painel por `http://SEU_IP/` em desenvolvimento ou `https://SEU_DOMINIO/` em produção e entre com a conta administrativa.
+2. Configure no CPE o ACS URL `http://SEU_DOMINIO:7547/` enquanto CWMP TLS não estiver configurado.
+3. Ligue o CPE à Internet e confira `docker compose logs -f genieacs`.
+4. Confirme o dispositivo e seus parâmetros reais na UI do GenieACS.
+5. Teste um perfil em laboratório antes de associá-lo a equipamentos de clientes.
 
 ## Estrutura
 
