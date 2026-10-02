@@ -97,6 +97,7 @@ services:
       GENIEACS_NBI_URL: http://genieacs:7557
       API_ADMIN_USERNAME: ${API_ADMIN_USERNAME:?Configure API_ADMIN_USERNAME no arquivo .env}
       API_ADMIN_PASSWORD: ${API_ADMIN_PASSWORD:?Configure API_ADMIN_PASSWORD no arquivo .env}
+      CPE_ADMIN_PASSWORD: ${CPE_ADMIN_PASSWORD:?Execute scripts/bootstrap-local.ps1 para gerar CPE_ADMIN_PASSWORD}
       API_SESSION_SECRET: ${API_SESSION_SECRET:?Configure API_SESSION_SECRET no arquivo .env}
       API_COOKIE_SECURE: ${API_COOKIE_SECURE:-false}
     expose:

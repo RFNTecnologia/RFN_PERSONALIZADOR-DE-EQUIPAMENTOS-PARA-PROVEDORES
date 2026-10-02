@@ -75,6 +75,9 @@ if (-not (Get-EnvValue "API_ADMIN_USERNAME")) {
 if (-not (Get-EnvValue "API_ADMIN_PASSWORD")) {
     Set-EnvValue "API_ADMIN_PASSWORD" (New-RandomHex 24)
 }
+if (-not (Get-EnvValue "CPE_ADMIN_PASSWORD")) {
+    Set-EnvValue "CPE_ADMIN_PASSWORD" (New-RandomHex 16)
+}
 if (-not (Get-EnvValue "API_SESSION_SECRET")) {
     Set-EnvValue "API_SESSION_SECRET" (New-RandomHex 64)
 }
@@ -89,3 +92,4 @@ if ($RotateAdminCredentials) {
 [System.IO.File]::WriteAllLines($envPath, $lines, [System.Text.UTF8Encoding]::new($false))
 Write-Output "Configuração local salva sem exibir segredos. Usuário administrativo: $(Get-EnvValue 'API_ADMIN_USERNAME')."
 Write-Output "Consulte API_ADMIN_PASSWORD no .env para entrar no painel local."
+Write-Output "CPE_ADMIN_PASSWORD foi armazenada no .env e não é exibida."

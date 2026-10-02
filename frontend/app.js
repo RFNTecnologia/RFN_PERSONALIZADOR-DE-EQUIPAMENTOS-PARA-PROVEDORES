@@ -177,7 +177,16 @@ function equipmentActions(id, acsId) {
   const options = profiles.map(p => `<option value="${p.id}" ${String(p.id) === String(e.profile_id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
   const identity = `<div class="device-head"><div><h2 style="margin:0">${esc(e.manufacturer)} ${esc(e.model)}</h2><div class="hint">Serial <span class="mono">${esc(e.serial_number)}</span></div></div><span class="badge ${e.status === 'online' ? 'online' : 'unknown'}">${esc(e.status)}</span></div>`;
   openModal(`${identity}<p class="hint">ACS ID: <span class="mono">${esc(acsId || 'não vinculado')}</span></p><div class="device-tabs"><button class="device-tab active" onclick="showDeviceTab('info',this,${id},'${esc(acsId || '')}')">Informações</button><button class="device-tab" onclick="showDeviceTab('params',this,${id},'${esc(acsId || '')}')">Parâmetros</button><button class="device-tab" onclick="showDeviceTab('wifi',this,${id},'${esc(acsId || '')}')">Wi-Fi</button><button class="device-tab" onclick="showDeviceTab('wan',this,${id},'${esc(acsId || '')}')">WAN</button><button class="device-tab" onclick="showDeviceTab('tr069',this,${id},'${esc(acsId || '')}')">TR-069</button><button class="device-tab" onclick="showDeviceTab('provision',this,${id},'${esc(acsId || '')}')">Provisionamento</button></div><div id="deviceTabBody"><div class="card"><div class="hint">Carregando dados do equipamento...</div></div></div><div class="device-actions"><div><label>Perfil</label><select id="eProfile"><option value="">Sem perfil</option>${options}</select></div><div class="actions"><button onclick="assignProfile(${id})">Associar perfil</button>${acsId ? `<button class="ok" onclick="applyProfile('${esc(acsId)}')">Aplicar perfil</button><button class="secondary" onclick="refreshDevice('${esc(acsId)}')">Atualizar do CPE</button>` : ''}</div></div>`);
-  if (acsId) loadDeviceParameters(id, acsId, 'info'); else showDeviceEmpty('Este equipamento não está vinculado a um dispositivo do GenieACS.');
+  if (acsId) {
+    const recoveryButton = document.createElement('button');
+    recoveryButton.className = 'danger';
+    recoveryButton.type = 'button';
+    recoveryButton.textContent = 'Proteção pós-reset';
+    recoveryButton.title = 'Troca as senhas admin/superadmin e instala reaplicação no próximo BOOTSTRAP';
+    recoveryButton.onclick = () => enableResetRecovery(acsId);
+    document.querySelector('.device-actions .actions')?.append(recoveryButton);
+    loadDeviceParameters(id, acsId, 'info');
+  } else showDeviceEmpty('Este equipamento não está vinculado a um dispositivo do GenieACS.');
 }
 async function showDeviceTab(tab, btn, id, acsId) {
   document.querySelectorAll('.device-tab').forEach(x => x.classList.remove('active')); btn?.classList.add('active');
@@ -356,4 +365,14 @@ async function sendProvisioning(acsId) {
 }
 async function assignProfile(id) { try { await api(`/api/equipment/${id}`, { method: 'PATCH', body: JSON.stringify({ profile_id: $('eProfile').value || null }) }); closeModal(); showStatus('Perfil associado.'); await loadAll(); } catch (e) { showStatus(e.message, false); } }
 async function applyProfile(acsId) { try { const e = equipment.find(x => x.acs_device_id === acsId); if (!e?.profile_id) throw new Error('Associe um perfil antes de aplicar.'); await api(`/api/acs/devices/${encodeURIComponent(acsId)}/apply-profile`, { method: 'POST', body: JSON.stringify({ profile_id: e.profile_id }) }); showStatus('Perfil enviado ao GenieACS/CPE.'); } catch (e) { showStatus(e.message, false); } }
+async function enableResetRecovery(acsId) {
+  const confirmed = window.confirm('Isso trocará as senhas admin e superadmin do MR60X por uma senha aleatória guardada no .env e criará uma regra para reaplicá-la no próximo BOOTSTRAP. Após reset, será necessário restaurar PPPoE e URL ACS localmente antes que a regra funcione. Continuar?');
+  if (!confirmed) return;
+  try {
+    const result = await api(`/api/acs/devices/${encodeURIComponent(acsId)}/enable-reset-recovery`, { method: 'POST', body: '{}' });
+    showStatus(`Recuperação instalada; ${result.parameterCount} parâmetro(s) enfileirado(s). Consulte CPE_ADMIN_PASSWORD no .env.`);
+  } catch (error) {
+    showStatus(error.message, false);
+  }
+}
 loadAll();

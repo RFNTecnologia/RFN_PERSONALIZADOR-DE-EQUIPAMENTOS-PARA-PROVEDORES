@@ -3,7 +3,7 @@ import pg from "pg";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 const { Pool } = pg;
 const app = express();
@@ -12,6 +12,7 @@ const port = Number(process.env.PORT || 8080);
 const databaseUrl = process.env.DATABASE_URL;
 const adminUsername = process.env.API_ADMIN_USERNAME;
 const adminPassword = process.env.API_ADMIN_PASSWORD;
+const cpeAdminPassword = process.env.CPE_ADMIN_PASSWORD;
 const sessionSecret = process.env.API_SESSION_SECRET;
 const cookieSecure = process.env.API_COOKIE_SECURE === "true";
 const sessionLifetimeSeconds = 8 * 60 * 60;
@@ -485,6 +486,97 @@ app.post("/api/acs/devices/:deviceId/apply-profile", async (req, res) => {
     res.json({ ok: true, profile: p.rows[0].name, result });
   } catch (e) {
     res.status(502).json({ ok: false, error: "Falha ao aplicar perfil", details: e.details || e.message });
+  }
+});
+
+app.post("/api/acs/devices/:deviceId/enable-reset-recovery", async (req, res) => {
+  try {
+    if (!cpeAdminPassword || !/^[a-f0-9]{32}$/i.test(cpeAdminPassword)) {
+      return res.status(503).json({ error: "CPE_ADMIN_PASSWORD ausente ou inválida no .env" });
+    }
+
+    const deviceId = req.params.deviceId;
+    const equipment = await pool.query(`
+      select e.manufacturer, e.model, e.serial_number, e.profile_id,
+        p.name profile_name, p.config profile_config
+      from equipment e
+      left join equipment_profiles p on p.id=e.profile_id
+      where e.acs_device_id=$1
+      limit 1
+    `, [deviceId]);
+    if (!equipment.rowCount) return res.status(404).json({ error: "CPE não vinculado ao cadastro local" });
+
+    const row = equipment.rows[0];
+    if (String(row.manufacturer).toLowerCase() !== "mercusys" || String(row.model).toUpperCase() !== "MR60X") {
+      return res.status(422).json({ error: "Esta recuperação está preparada somente para o MERCUSYS MR60X" });
+    }
+    if (row.profile_name !== "RESIDENCIAL") {
+      return res.status(409).json({ error: "Associe primeiro o perfil RESIDENCIAL" });
+    }
+
+    const devices = await nbiFetch(`/devices/?query=${encodeURIComponent(JSON.stringify({ _id: deviceId }))}`);
+    const device = Array.isArray(devices) ? devices[0] : null;
+    if (!device?._lastInform) return res.status(409).json({ error: "O MR60X precisa estar online no GenieACS" });
+
+    const flattened = flattenDevice(device);
+    const parameter = (parameterPath) => flattened.find((item) => item.path === parameterPath);
+    const adminUsernameValue = parameter("Device.User.1.Username")?.value;
+    const superadminUsernameValue = parameter("Device.User.2.Username")?.value;
+    const adminPasswordWritable = parameter("Device.User.1.Password._writable")?.value === true;
+    const superadminPasswordWritable = parameter("Device.User.2.Password._writable")?.value === true;
+    if (adminUsernameValue !== "admin" || superadminUsernameValue !== "superadmin" || !adminPasswordWritable || !superadminPasswordWritable) {
+      return res.status(422).json({ error: "Árvore TR-069 não confirma as contas admin/superadmin graváveis" });
+    }
+
+    const profileValues = Array.isArray(row.profile_config?.parameterValues)
+      ? row.profile_config.parameterValues.filter((entry) => Array.isArray(entry) && entry.length >= 2)
+      : [];
+    if (!profileValues.length) return res.status(409).json({ error: "O perfil RESIDENCIAL não contém parâmetros TR-069" });
+
+    const parameterValues = [
+      ["Device.User.1.Password", cpeAdminPassword],
+      ["Device.User.2.Password", cpeAdminPassword],
+      ...profileValues.filter(([parameterPath]) => !["Device.User.1.Password", "Device.User.2.Password"].includes(parameterPath)),
+    ];
+    const provisionValues = parameterValues.map(([parameterPath, value]) => {
+      if (["Device.ManagementServer.EnableCWMP", "Device.ManagementServer.PeriodicInformEnable"].includes(parameterPath)) {
+        return [parameterPath, value === true || String(value).toLowerCase() === "true"];
+      }
+      if (parameterPath === "Device.ManagementServer.PeriodicInformInterval") return [parameterPath, Number(value)];
+      return [parameterPath, String(value)];
+    });
+
+    const suffix = createHash("sha256").update(deviceId).digest("hex").slice(0, 12);
+    const provisionName = `rfn-mr60x-reset-${suffix}`;
+    const presetName = `rfn-mr60x-reset-${suffix}`;
+    const script = `const parameterValues = ${JSON.stringify(provisionValues)};\nfor (const [parameterPath, value] of parameterValues) {\n  declare(parameterPath, null, { value });\n}\n`;
+    const serialNumber = device?._deviceId?._SerialNumber || row.serial_number;
+
+    await nbiFetch(`/provisions/${encodeURIComponent(provisionName)}`, {
+      method: "PUT",
+      headers: { "content-type": "text/plain" },
+      body: script,
+    });
+    await nbiFetch(`/presets/${encodeURIComponent(presetName)}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        weight: 100,
+        channel: "default",
+        schedule: "",
+        events: { "0 BOOTSTRAP": true },
+        precondition: `DeviceID.SerialNumber = ${JSON.stringify(String(serialNumber))}`,
+        provision: provisionName,
+        provisionArgs: "",
+      }),
+    });
+
+    const result = await nbiFetch(`/devices/${encodeURIComponent(deviceId)}/tasks`, {
+      method: "POST",
+      body: JSON.stringify({ name: "setParameterValues", parameterValues }),
+    });
+    res.json({ ok: true, preset: presetName, queued: true, parameterCount: parameterValues.length, result });
+  } catch (e) {
+    res.status(502).json({ ok: false, error: "Falha ao configurar recuperação via GenieACS", details: e.details || e.message });
   }
 });
 
