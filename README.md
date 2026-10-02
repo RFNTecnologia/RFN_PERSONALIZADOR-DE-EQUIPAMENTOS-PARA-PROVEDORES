@@ -107,3 +107,15 @@ A tarefa requer esta conta conectada e o Docker Desktop ativo. A restauração d
 - `nginx/`: proxy
 - `backend/migrations/`: esquema e migrations do banco
 - `postgres/`: configuração opcional do PostgreSQL em contêiner
+
+
+## V12 — Laboratório MR60X / Reset Recovery
+
+A V12 remove a dependência experimental de `Device.User.1/2` para recuperação pós-reset. O módulo `Laboratório MR60X` usa um catálogo determinístico por fabricante/modelo, registra refresh, leitura e write-probe em `lab_runs` e separa o que o CPE apenas reporta como gravável do que foi efetivamente aceito pelo ACS.
+
+### Testes
+- `RefreshObject`: solicita nova coleta do CPE.
+- `Read`: solicita `getParameterValues` somente para caminhos do catálogo.
+- `Write-probe`: reenvia o valor atual somente para parâmetros marcados como seguros e reportados como graváveis. O status `queued` não é tratado como prova de aplicação; a confirmação depende do próximo Inform/refresh.
+
+O endpoint legado `enable-reset-recovery` responde HTTP 410 e não tenta mais alterar `Device.User.1/2`.

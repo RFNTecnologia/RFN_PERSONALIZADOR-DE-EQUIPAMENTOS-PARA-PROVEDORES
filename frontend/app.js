@@ -176,15 +176,8 @@ function equipmentActions(id, acsId) {
   const e = equipment.find(x => String(x.id) === String(id)); if (!e) { showStatus('Equipamento não encontrado na lista.', false); return; }
   const options = profiles.map(p => `<option value="${p.id}" ${String(p.id) === String(e.profile_id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
   const identity = `<div class="device-head"><div><h2 style="margin:0">${esc(e.manufacturer)} ${esc(e.model)}</h2><div class="hint">Serial <span class="mono">${esc(e.serial_number)}</span></div></div><span class="badge ${e.status === 'online' ? 'online' : 'unknown'}">${esc(e.status)}</span></div>`;
-  openModal(`${identity}<p class="hint">ACS ID: <span class="mono">${esc(acsId || 'não vinculado')}</span></p><div class="device-tabs"><button class="device-tab active" onclick="showDeviceTab('info',this,${id},'${esc(acsId || '')}')">Informações</button><button class="device-tab" onclick="showDeviceTab('params',this,${id},'${esc(acsId || '')}')">Parâmetros</button><button class="device-tab" onclick="showDeviceTab('wifi',this,${id},'${esc(acsId || '')}')">Wi-Fi</button><button class="device-tab" onclick="showDeviceTab('wan',this,${id},'${esc(acsId || '')}')">WAN</button><button class="device-tab" onclick="showDeviceTab('tr069',this,${id},'${esc(acsId || '')}')">TR-069</button><button class="device-tab" onclick="showDeviceTab('provision',this,${id},'${esc(acsId || '')}')">Provisionamento</button></div><div id="deviceTabBody"><div class="card"><div class="hint">Carregando dados do equipamento...</div></div></div><div class="device-actions"><div><label>Perfil</label><select id="eProfile"><option value="">Sem perfil</option>${options}</select></div><div class="actions"><button onclick="assignProfile(${id})">Associar perfil</button>${acsId ? `<button class="ok" onclick="applyProfile('${esc(acsId)}')">Aplicar perfil</button><button class="secondary" onclick="refreshDevice('${esc(acsId)}')">Atualizar do CPE</button>` : ''}</div></div>`);
+  openModal(`${identity}<p class="hint">ACS ID: <span class="mono">${esc(acsId || 'não vinculado')}</span></p><div class="device-tabs"><button class="device-tab active" onclick="showDeviceTab('info',this,${id},'${esc(acsId || '')}')">Informações</button><button class="device-tab" onclick="showDeviceTab('params',this,${id},'${esc(acsId || '')}')">Parâmetros</button><button class="device-tab" onclick="showDeviceTab('wifi',this,${id},'${esc(acsId || '')}')">Wi-Fi</button><button class="device-tab" onclick="showDeviceTab('wan',this,${id},'${esc(acsId || '')}')">WAN</button><button class="device-tab" onclick="showDeviceTab('tr069',this,${id},'${esc(acsId || '')}')">TR-069</button><button class="device-tab" onclick="showDeviceTab('provision',this,${id},'${esc(acsId || '')}')">Provisionamento</button><button class="device-tab" onclick="showDeviceTab('lab',this,${id},'${esc(acsId || '')}')">Laboratório MR60X</button></div><div id="deviceTabBody"><div class="card"><div class="hint">Carregando dados do equipamento...</div></div></div><div class="device-actions"><div><label>Perfil</label><select id="eProfile"><option value="">Sem perfil</option>${options}</select></div><div class="actions"><button onclick="assignProfile(${id})">Associar perfil</button>${acsId ? `<button class="ok" onclick="applyProfile('${esc(acsId)}')">Aplicar perfil</button><button class="secondary" onclick="refreshDevice('${esc(acsId)}')">Atualizar do CPE</button>` : ''}</div></div>`);
   if (acsId) {
-    const recoveryButton = document.createElement('button');
-    recoveryButton.className = 'danger';
-    recoveryButton.type = 'button';
-    recoveryButton.textContent = 'Proteção pós-reset';
-    recoveryButton.title = 'Troca as senhas admin/superadmin e instala reaplicação no próximo BOOTSTRAP';
-    recoveryButton.onclick = () => enableResetRecovery(acsId);
-    document.querySelector('.device-actions .actions')?.append(recoveryButton);
     loadDeviceParameters(id, acsId, 'info');
   } else showDeviceEmpty('Este equipamento não está vinculado a um dispositivo do GenieACS.');
 }
@@ -301,10 +294,13 @@ async function loadDeviceParameters(id, acsId, tab) {
     else if (tab === 'wan') $('deviceTabBody').innerHTML = `${sectionCard('WAN / Internet / VLAN / IP', d.categories.wan)}<div class="hint-block">Os parâmetros exibidos são somente os que o GenieACS já possui em cache para este CPE.</div>`;
     else if (tab === 'tr069') $('deviceTabBody').innerHTML = `${sectionCard('Gerência TR-069 / ManagementServer', d.categories.tr069)}<div class="hint-block">Use estes nomes exatos ao montar perfis de provisionamento para o modelo.</div>`;
     else if (tab === 'provision') renderProvisionForm(d.values || [], acsId);
+    else if (tab === 'lab') await renderMr60xLab(acsId);
     else $('deviceTabBody').innerHTML = `${sectionCard('Todos os parâmetros coletados', d.values)}`;
   } catch (e) { $('deviceTabBody').innerHTML = `<div class="card empty">${esc(e.message)}</div>`; }
 }
-function findParameterPath(values, needles) {
+function findParameterPath(values, exactPaths, needles = []) {
+  const byPath = new Set((values || []).map(x => String(x.path || '')));
+  for (const path of exactPaths || []) if (byPath.has(path)) return path;
   const arr = (values || []).map(x => String(x.path || ''));
   for (const needle of needles) {
     const found = arr.find(p => p.toLowerCase().includes(String(needle).toLowerCase()));
@@ -313,13 +309,13 @@ function findParameterPath(values, needles) {
   return '';
 }
 function renderProvisionForm(values, acsId) {
-  const pppoeUser = findParameterPath(values, ['pppoe.username', 'pppoe.user', 'username']);
-  const pppoePass = findParameterPath(values, ['pppoe.password', 'pppoe.pass', 'password']);
-  const vlan = findParameterPath(values, ['vlanid', 'vlan']);
-  const mtu = findParameterPath(values, ['mtu']);
-  const dns = findParameterPath(values, ['dns', 'DNSServer']);
-  const ssid = findParameterPath(values, ['ssid']);
-  const wifiPass = findParameterPath(values, ['pre-sharedkey', 'wifikey', 'wirelesskey']);
+  const pppoeUser = findParameterPath(values, ['Device.PPP.Interface.1.Username'], ['pppoe.username', 'pppoe.user']);
+  const pppoePass = findParameterPath(values, ['Device.PPP.Interface.1.Password'], ['pppoe.password', 'pppoe.pass']);
+  const vlan = findParameterPath(values, ['Device.Ethernet.VLANTermination.1.VLANID'], ['vlanid', 'vlan']);
+  const mtu = findParameterPath(values, ['Device.PPP.Interface.1.MaxMRUSize', 'Device.IP.Interface.1.MaxMTUSize'], ['mtu']);
+  const dns = findParameterPath(values, ['Device.PPP.Interface.1.IPCP.DNSServers'], ['dns', 'DNSServer']);
+  const ssid = findParameterPath(values, ['Device.WiFi.SSID.1.SSID'], ['ssid']);
+  const wifiPass = findParameterPath(values, ['Device.WiFi.AccessPoint.1.Security.PreSharedKey'], ['pre-sharedkey', 'wifikey', 'wirelesskey']);
   const fields = [
     ['pppoeUserPath', 'Caminho PPPoE — usuário', pppoeUser, 'Ex.: ...Username'],
     ['pppoeUser', 'Usuário PPPoE', '', 'Digite o usuário do cliente'],
@@ -365,14 +361,31 @@ async function sendProvisioning(acsId) {
 }
 async function assignProfile(id) { try { await api(`/api/equipment/${id}`, { method: 'PATCH', body: JSON.stringify({ profile_id: $('eProfile').value || null }) }); closeModal(); showStatus('Perfil associado.'); await loadAll(); } catch (e) { showStatus(e.message, false); } }
 async function applyProfile(acsId) { try { const e = equipment.find(x => x.acs_device_id === acsId); if (!e?.profile_id) throw new Error('Associe um perfil antes de aplicar.'); await api(`/api/acs/devices/${encodeURIComponent(acsId)}/apply-profile`, { method: 'POST', body: JSON.stringify({ profile_id: e.profile_id }) }); showStatus('Perfil enviado ao GenieACS/CPE.'); } catch (e) { showStatus(e.message, false); } }
-async function enableResetRecovery(acsId) {
-  const confirmed = window.confirm('Isso trocará as senhas admin e superadmin do MR60X por uma senha aleatória guardada no .env e criará uma regra para reaplicá-la no próximo BOOTSTRAP. Após reset, será necessário restaurar PPPoE e URL ACS localmente antes que a regra funcione. Continuar?');
-  if (!confirmed) return;
+async function renderMr60xLab(acsId) {
+  $('deviceTabBody').innerHTML = '<div class="card"><div class="hint">Consultando laboratório determinístico do modelo...</div></div>';
   try {
-    const result = await api(`/api/acs/devices/${encodeURIComponent(acsId)}/enable-reset-recovery`, { method: 'POST', body: '{}' });
-    showStatus(`Recuperação instalada; ${result.parameterCount} parâmetro(s) enfileirado(s). Consulte CPE_ADMIN_PASSWORD no .env.`);
-  } catch (error) {
-    showStatus(error.message, false);
-  }
+    const d = await api(`/api/acs/devices/${encodeURIComponent(acsId)}/lab`);
+    const badge = d.supported ? '<span class="badge online">Catálogo MR60X ativo</span>' : '<span class="badge unknown">Modelo sem catálogo</span>';
+    const candidates = (d.candidates || []).map(c => {
+      const value = c.sensitive ? (c.discovered ? '[redacted]' : '—') : (c.discovered ? esc(c.value) : '—');
+      const writable = c.discovered ? (c.writable ? 'gravável' : 'somente leitura') : 'não observado';
+      const probe = c.safeProbe && c.discovered && c.writable ? `<button class="secondary" onclick="labWriteProbe('${esc(acsId)}','${esc(c.path)}')">Write-probe</button>` : '';
+      const read = c.discovered ? `<button class="secondary" onclick="labRead('${esc(acsId)}','${esc(c.path)}')">Ler</button>` : '';
+      return `<div class="kv" style="gap:10px;align-items:flex-start"><div style="min-width:0;flex:1"><b>${esc(c.label)}</b><div class="hint mono">${esc(c.path)}</div><div class="hint">${writable} · tipo ${esc(c.type || '—')} · valor ${value}</div></div><div class="actions">${read}${probe}</div></div>`;
+    }).join('');
+    const runs = (d.runs || []).map(r => `<tr><td>${esc(r.id)}</td><td>${esc(r.test_type)}</td><td class="mono">${esc(r.parameter_path || '—')}</td><td>${esc(r.status)}</td><td class="mono">${esc(r.created_at)}</td></tr>`).join('') || '<tr><td colspan="5" class="empty">Nenhum teste registrado.</td></tr>';
+    $('deviceTabBody').innerHTML = `<div class="card"><div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap"><div><h3 style="margin:0">Laboratório MR60X</h3><p class="hint">${d.supported ? 'Catálogo exato do MERCUSYS MR60X. Nenhuma busca genérica cria caminho de escrita.' : 'Este modelo ainda não possui catálogo determinístico.'}</p></div><div class="actions"><button onclick="labRefresh('${esc(acsId)}')">RefreshObject</button><button class="secondary" onclick="showDeviceTab('lab',document.querySelector('.device-tab.active'),null,'${esc(acsId)}')">Atualizar resultados</button></div></div><div class="hint-block">${badge} Último Inform: <span class="mono">${esc(d.lastInform || '—')}</span></div>${candidates ? `<div class="param-list" style="margin-top:12px">${candidates}</div>` : ''}</div><div class="card" style="margin-top:12px"><h3 style="margin-top:0">Histórico do laboratório</h3><div class="table-wrap"><table><thead><tr><th>ID</th><th>Teste</th><th>Parâmetro</th><th>Status</th><th>Data</th></tr></thead><tbody>${runs}</tbody></table></div><p class="hint">"queued" significa que o ACS aceitou/enfileirou a tarefa; o resultado real no CPE deve ser confirmado após novo Inform/refresh.</p></div>`;
+  } catch (e) { $('deviceTabBody').innerHTML = `<div class="card empty">${esc(e.message)}</div>`; }
+}
+async function labRefresh(acsId) {
+  try { const r = await api(`/api/acs/devices/${encodeURIComponent(acsId)}/lab/refresh`, { method:'POST', body:'{}' }); showStatus(`Refresh solicitado. Teste #${r.runId} registrado.`); } catch(e) { showStatus(e.message,false); }
+}
+async function labRead(acsId, pathValue) {
+  try { const r = await api(`/api/acs/devices/${encodeURIComponent(acsId)}/lab/read`, { method:'POST', body:JSON.stringify({path:pathValue}) }); showStatus(`Leitura solicitada para ${pathValue}. Teste #${r.runId}.`); } catch(e) { showStatus(e.message,false); }
+}
+async function labWriteProbe(acsId, pathValue) {
+  const ok = window.confirm(`O teste reenviará o valor ATUAL de ${pathValue} para verificar se o CPE aceita setParameterValues sem alterar efetivamente o valor. Continuar?`);
+  if (!ok) return;
+  try { const r = await api(`/api/acs/devices/${encodeURIComponent(acsId)}/lab/write-probe`, { method:'POST', body:JSON.stringify({path:pathValue}) }); showStatus(`Write-probe enfileirado. Teste #${r.runId}. Confirme no próximo Inform.`); } catch(e) { showStatus(e.message,false); }
 }
 loadAll();

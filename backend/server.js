@@ -363,21 +363,99 @@ app.get("/api/acs/devices/:deviceId", async (req, res) => {
   }
 });
 
+function isSensitiveParameterPath(parameterPath) {
+  const low = String(parameterPath || "").toLowerCase();
+  return /password|passphrase|presharedkey|secret/.test(low);
+}
+
 function flattenDevice(node, prefix = "", out = []) {
   if (node === null || node === undefined) return out;
   if (typeof node !== "object") {
-    if (prefix) out.push({ path: prefix, value: node, type: typeof node });
+    if (prefix) out.push({ path: prefix, value: isSensitiveParameterPath(prefix) ? "[redacted]" : node, sensitive: isSensitiveParameterPath(prefix), type: typeof node, writable: false, timestamp: null });
     return out;
   }
   if (Object.prototype.hasOwnProperty.call(node, "_value")) {
-    out.push({ path: prefix, value: node._value, type: node._type || typeof node._value, timestamp: node._timestamp || null });
+    const sensitive = isSensitiveParameterPath(prefix);
+    out.push({
+      path: prefix,
+      value: sensitive ? "[redacted]" : node._value,
+      sensitive,
+      type: node._type || typeof node._value,
+      writable: node._writable === true,
+      timestamp: node._timestamp || null,
+    });
   }
   for (const [key, value] of Object.entries(node)) {
-    if (key === "_value" || key === "_type" || key === "_timestamp") continue;
+    if (key.startsWith("_")) continue;
     const next = prefix ? `${prefix}.${key}` : key;
     flattenDevice(value, next, out);
   }
   return out;
+}
+
+const MR60X_PARAMETER_CATALOG = [
+  { id: "pppoe.username", category: "PPPoE", label: "Usuário PPPoE", path: "Device.PPP.Interface.1.Username", sensitive: false, safeProbe: false },
+  { id: "pppoe.password", category: "PPPoE", label: "Senha PPPoE", path: "Device.PPP.Interface.1.Password", sensitive: true, safeProbe: false },
+  { id: "pppoe.enable", category: "PPPoE", label: "PPPoE habilitado", path: "Device.PPP.Interface.1.Enable", sensitive: false, safeProbe: true },
+  { id: "pppoe.mru", category: "PPPoE", label: "MRU PPPoE", path: "Device.PPP.Interface.1.MaxMRUSize", sensitive: false, safeProbe: true },
+  { id: "pppoe.dns", category: "PPPoE", label: "DNS PPPoE", path: "Device.PPP.Interface.1.IPCP.DNSServers", sensitive: false, safeProbe: false },
+  { id: "pppoe.trigger", category: "PPPoE", label: "Disparo da conexão", path: "Device.PPP.Interface.1.ConnectionTrigger", sensitive: false, safeProbe: true },
+  { id: "wifi.ssid24", category: "Wi-Fi", label: "SSID 2.4 GHz", path: "Device.WiFi.SSID.1.SSID", sensitive: false, safeProbe: false },
+  { id: "wifi.ssid5", category: "Wi-Fi", label: "SSID 5 GHz", path: "Device.WiFi.SSID.3.SSID", sensitive: false, safeProbe: false },
+  { id: "wifi.psk24", category: "Wi-Fi", label: "Chave Wi-Fi 2.4 GHz", path: "Device.WiFi.AccessPoint.1.Security.PreSharedKey", sensitive: true, safeProbe: false },
+  { id: "wifi.psk5", category: "Wi-Fi", label: "Chave Wi-Fi 5 GHz", path: "Device.WiFi.AccessPoint.3.Security.PreSharedKey", sensitive: true, safeProbe: false },
+  { id: "wifi.mode24", category: "Wi-Fi", label: "Modo de segurança 2.4 GHz", path: "Device.WiFi.AccessPoint.1.Security.ModeEnabled", sensitive: false, safeProbe: false },
+  { id: "wifi.mode5", category: "Wi-Fi", label: "Modo de segurança 5 GHz", path: "Device.WiFi.AccessPoint.3.Security.ModeEnabled", sensitive: false, safeProbe: false },
+  { id: "mgmt.url", category: "TR-069", label: "URL de conexão ACS", path: "Device.ManagementServer.URL", sensitive: false, safeProbe: false },
+  { id: "mgmt.username", category: "TR-069", label: "Usuário ACS", path: "Device.ManagementServer.Username", sensitive: false, safeProbe: false },
+  { id: "mgmt.password", category: "TR-069", label: "Senha ACS", path: "Device.ManagementServer.Password", sensitive: true, safeProbe: false },
+  { id: "mgmt.enablecwmp", category: "TR-069", label: "CWMP habilitado", path: "Device.ManagementServer.EnableCWMP", sensitive: false, safeProbe: true },
+  { id: "mgmt.periodic", category: "TR-069", label: "Periodic Inform", path: "Device.ManagementServer.PeriodicInformEnable", sensitive: false, safeProbe: true },
+  { id: "mgmt.interval", category: "TR-069", label: "Intervalo Periodic Inform", path: "Device.ManagementServer.PeriodicInformInterval", sensitive: false, safeProbe: true },
+  { id: "mgmt.connection_request_user", category: "TR-069", label: "Usuário Connection Request", path: "Device.ManagementServer.ConnectionRequestUsername", sensitive: false, safeProbe: false },
+  { id: "mgmt.connection_request_password", category: "TR-069", label: "Senha Connection Request", path: "Device.ManagementServer.ConnectionRequestPassword", sensitive: true, safeProbe: false },
+  { id: "vlan.termination1", category: "VLAN", label: "VLANID termination 1", path: "Device.Ethernet.VLANTermination.1.VLANID", sensitive: false, safeProbe: false },
+];
+
+function modelCatalogFor(device) {
+  const manufacturer = String(device?._deviceId?._Manufacturer || "").trim().toLowerCase();
+  const model = String(device?._deviceId?._ProductClass || "").trim().toUpperCase();
+  if (manufacturer === "mercusys" && model === "MR60X") return MR60X_PARAMETER_CATALOG;
+  return [];
+}
+
+function catalogSnapshot(device) {
+  const values = flattenDevice(device);
+  const byPath = new Map(values.map((item) => [item.path, item]));
+  return modelCatalogFor(device).map((candidate) => {
+    const live = byPath.get(candidate.path) || null;
+    return {
+      ...candidate,
+      discovered: Boolean(live),
+      writable: live?.writable === true,
+      type: live?.type || null,
+      value: redactValue(live?.value ?? null, candidate.sensitive),
+      timestamp: live?.timestamp || null,
+      valueAvailable: Boolean(live),
+    };
+  });
+}
+
+function redactValue(value, sensitive = false) {
+  return sensitive ? (value === null || value === undefined ? null : "[redacted]") : value;
+}
+
+async function insertLabRun(data) {
+  const q = await pool.query(
+    `insert into lab_runs (device_id, manufacturer, model, test_type, parameter_path, requested_value, observed_value, task_result, status)
+     values ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9)
+     returning id, created_at`,
+    [
+      data.deviceId, data.manufacturer || null, data.model || null, data.testType, data.parameterPath || null,
+      JSON.stringify(data.requestedValue ?? null), JSON.stringify(data.observedValue ?? null), JSON.stringify(data.taskResult ?? null), data.status,
+    ]
+  );
+  return q.rows[0];
 }
 
 function categorizeParameters(values) {
@@ -489,95 +567,122 @@ app.post("/api/acs/devices/:deviceId/apply-profile", async (req, res) => {
   }
 });
 
-app.post("/api/acs/devices/:deviceId/enable-reset-recovery", async (req, res) => {
+app.get("/api/acs/devices/:deviceId/lab", async (req, res) => {
   try {
-    if (!cpeAdminPassword || !/^[a-f0-9]{32}$/i.test(cpeAdminPassword)) {
-      return res.status(503).json({ error: "CPE_ADMIN_PASSWORD ausente ou inválida no .env" });
-    }
-
     const deviceId = req.params.deviceId;
-    const equipment = await pool.query(`
-      select e.manufacturer, e.model, e.serial_number, e.profile_id,
-        p.name profile_name, p.config profile_config
-      from equipment e
-      left join equipment_profiles p on p.id=e.profile_id
-      where e.acs_device_id=$1
-      limit 1
-    `, [deviceId]);
-    if (!equipment.rowCount) return res.status(404).json({ error: "CPE não vinculado ao cadastro local" });
-
-    const row = equipment.rows[0];
-    if (String(row.manufacturer).toLowerCase() !== "mercusys" || String(row.model).toUpperCase() !== "MR60X") {
-      return res.status(422).json({ error: "Esta recuperação está preparada somente para o MERCUSYS MR60X" });
-    }
-    if (row.profile_name !== "RESIDENCIAL") {
-      return res.status(409).json({ error: "Associe primeiro o perfil RESIDENCIAL" });
-    }
-
     const devices = await nbiFetch(`/devices/?query=${encodeURIComponent(JSON.stringify({ _id: deviceId }))}`);
     const device = Array.isArray(devices) ? devices[0] : null;
-    if (!device?._lastInform) return res.status(409).json({ error: "O MR60X precisa estar online no GenieACS" });
-
-    const flattened = flattenDevice(device);
-    const parameter = (parameterPath) => flattened.find((item) => item.path === parameterPath);
-    const adminUsernameValue = parameter("Device.User.1.Username")?.value;
-    const superadminUsernameValue = parameter("Device.User.2.Username")?.value;
-    const adminPasswordWritable = parameter("Device.User.1.Password._writable")?.value === true;
-    const superadminPasswordWritable = parameter("Device.User.2.Password._writable")?.value === true;
-    if (adminUsernameValue !== "admin" || superadminUsernameValue !== "superadmin" || !adminPasswordWritable || !superadminPasswordWritable) {
-      return res.status(422).json({ error: "Árvore TR-069 não confirma as contas admin/superadmin graváveis" });
-    }
-
-    const profileValues = Array.isArray(row.profile_config?.parameterValues)
-      ? row.profile_config.parameterValues.filter((entry) => Array.isArray(entry) && entry.length >= 2)
-      : [];
-    if (!profileValues.length) return res.status(409).json({ error: "O perfil RESIDENCIAL não contém parâmetros TR-069" });
-
-    const parameterValues = [
-      ["Device.User.1.Password", cpeAdminPassword],
-      ["Device.User.2.Password", cpeAdminPassword],
-      ...profileValues.filter(([parameterPath]) => !["Device.User.1.Password", "Device.User.2.Password"].includes(parameterPath)),
-    ];
-    const provisionValues = parameterValues.map(([parameterPath, value]) => {
-      if (["Device.ManagementServer.EnableCWMP", "Device.ManagementServer.PeriodicInformEnable"].includes(parameterPath)) {
-        return [parameterPath, value === true || String(value).toLowerCase() === "true"];
-      }
-      if (parameterPath === "Device.ManagementServer.PeriodicInformInterval") return [parameterPath, Number(value)];
-      return [parameterPath, String(value)];
+    if (!device) return res.status(404).json({ error: "CPE não encontrado no GenieACS" });
+    const identity = device._deviceId || {};
+    const catalog = catalogSnapshot(device);
+    const liveByPath = new Map(flattenDevice(device).map((item) => [item.path, item]));
+    const runs = await pool.query(
+      `select id, test_type, parameter_path, status, requested_value, observed_value, task_result, created_at
+       from lab_runs where device_id=$1 order by id desc limit 30`,
+      [deviceId]
+    );
+    const enrichedRuns = runs.rows.map((run) => {
+      const live = run.parameter_path ? liveByPath.get(run.parameter_path) : null;
+      return {
+        ...run,
+        cache_observed: Boolean(live),
+        cache_value: live ? redactValue(live.value, modelCatalogFor(device).find((c) => c.path === run.parameter_path)?.sensitive) : null,
+        cache_writable: live?.writable === true,
+        cache_type: live?.type || null,
+        interpretation: run.test_type === "write-probe"
+          ? (live ? "valor presente no cache após consulta; isso não prova sozinho que a escrita foi persistida" : "aguardando novo Inform/refresh")
+          : (live ? "valor observado no cache atual" : "aguardando novo Inform/refresh"),
+      };
     });
-
-    const suffix = createHash("sha256").update(deviceId).digest("hex").slice(0, 12);
-    const provisionName = `rfn-mr60x-reset-${suffix}`;
-    const presetName = `rfn-mr60x-reset-${suffix}`;
-    const script = `const parameterValues = ${JSON.stringify(provisionValues)};\nfor (const [parameterPath, value] of parameterValues) {\n  declare(parameterPath, null, { value });\n}\n`;
-    const serialNumber = device?._deviceId?._SerialNumber || row.serial_number;
-
-    await nbiFetch(`/provisions/${encodeURIComponent(provisionName)}`, {
-      method: "PUT",
-      headers: { "content-type": "text/plain" },
-      body: script,
+    res.json({
+      deviceId,
+      identity,
+      supported: catalog.length > 0,
+      model: { manufacturer: identity._Manufacturer || null, productClass: identity._ProductClass || null },
+      lastInform: device._lastInform || null,
+      lastBoot: device._lastBoot || null,
+      candidates: catalog,
+      runs: enrichedRuns,
     });
-    await nbiFetch(`/presets/${encodeURIComponent(presetName)}`, {
-      method: "PUT",
-      body: JSON.stringify({
-        weight: 100,
-        channel: "default",
-        schedule: "",
-        events: { "0 BOOTSTRAP": true },
-        precondition: `DeviceID.SerialNumber = ${JSON.stringify(String(serialNumber))}`,
-        provision: provisionName,
-        provisionArgs: "",
-      }),
-    });
-
-    const result = await nbiFetch(`/devices/${encodeURIComponent(deviceId)}/tasks`, {
-      method: "POST",
-      body: JSON.stringify({ name: "setParameterValues", parameterValues }),
-    });
-    res.json({ ok: true, preset: presetName, queued: true, parameterCount: parameterValues.length, result });
   } catch (e) {
-    res.status(502).json({ ok: false, error: "Falha ao configurar recuperação via GenieACS", details: e.details || e.message });
+    res.status(502).json({ ok: false, error: "Falha ao carregar laboratório do CPE", details: e.details || e.message });
   }
+});
+
+app.post("/api/acs/devices/:deviceId/lab/refresh", async (req, res) => {
+  try {
+    const deviceId = req.params.deviceId;
+    const devices = await nbiFetch(`/devices/?query=${encodeURIComponent(JSON.stringify({ _id: deviceId }))}`);
+    const device = Array.isArray(devices) ? devices[0] : null;
+    if (!device) return res.status(404).json({ error: "CPE não encontrado no GenieACS" });
+    const task = { name: "refreshObject", objectName: "" };
+    const result = await nbiFetch(`/devices/${encodeURIComponent(deviceId)}/tasks?connection_request`, { method: "POST", body: JSON.stringify(task) });
+    const run = await insertLabRun({
+      deviceId, manufacturer: device?._deviceId?._Manufacturer, model: device?._deviceId?._ProductClass,
+      testType: "refresh", taskResult: result, status: "queued",
+    });
+    res.json({ ok: true, status: "queued", runId: run.id, result });
+  } catch (e) {
+    res.status(502).json({ ok: false, error: "Falha ao solicitar refreshObject", details: e.details || e.message });
+  }
+});
+
+app.post("/api/acs/devices/:deviceId/lab/read", async (req, res) => {
+  try {
+    const deviceId = req.params.deviceId;
+    const pathValue = String(req.body?.path || "").trim();
+    if (!pathValue) return res.status(400).json({ error: "path é obrigatório" });
+    const devices = await nbiFetch(`/devices/?query=${encodeURIComponent(JSON.stringify({ _id: deviceId }))}`);
+    const device = Array.isArray(devices) ? devices[0] : null;
+    if (!device) return res.status(404).json({ error: "CPE não encontrado no GenieACS" });
+    const candidate = modelCatalogFor(device).find((item) => item.path === pathValue);
+    if (!candidate) return res.status(422).json({ error: "Parâmetro fora do catálogo determinístico do modelo" });
+    const task = { name: "getParameterValues", parameterNames: [pathValue] };
+    const result = await nbiFetch(`/devices/${encodeURIComponent(deviceId)}/tasks?connection_request`, { method: "POST", body: JSON.stringify(task) });
+    const run = await insertLabRun({
+      deviceId, manufacturer: device?._deviceId?._Manufacturer, model: device?._deviceId?._ProductClass,
+      testType: "read", parameterPath: pathValue, taskResult: result, status: "queued",
+    });
+    res.json({ ok: true, status: "queued", runId: run.id, path: pathValue, result });
+  } catch (e) {
+    res.status(502).json({ ok: false, error: "Falha ao solicitar leitura ao CPE", details: e.details || e.message });
+  }
+});
+
+app.post("/api/acs/devices/:deviceId/lab/write-probe", async (req, res) => {
+  try {
+    const deviceId = req.params.deviceId;
+    const pathValue = String(req.body?.path || "").trim();
+    if (!pathValue) return res.status(400).json({ error: "path é obrigatório" });
+    const devices = await nbiFetch(`/devices/?query=${encodeURIComponent(JSON.stringify({ _id: deviceId }))}`);
+    const device = Array.isArray(devices) ? devices[0] : null;
+    if (!device) return res.status(404).json({ error: "CPE não encontrado no GenieACS" });
+    const candidate = modelCatalogFor(device).find((item) => item.path === pathValue);
+    if (!candidate) return res.status(422).json({ error: "Parâmetro fora do catálogo determinístico do modelo" });
+    if (!candidate.safeProbe) return res.status(409).json({ error: "Este parâmetro não está autorizado para write-probe seguro" });
+    const live = flattenDevice(device).find((item) => item.path === pathValue);
+    if (!live) return res.status(409).json({ error: "Parâmetro ainda não está presente no cache; execute Refresh/Inform antes do teste" });
+    if (live.writable !== true) return res.status(409).json({ error: "O CPE/firmware reportou o parâmetro como não gravável" });
+    const parameterValues = [[pathValue, live.value]];
+    const task = { name: "setParameterValues", parameterValues };
+    const result = await nbiFetch(`/devices/${encodeURIComponent(deviceId)}/tasks?connection_request`, { method: "POST", body: JSON.stringify(task) });
+    const run = await insertLabRun({
+      deviceId, manufacturer: device?._deviceId?._Manufacturer, model: device?._deviceId?._ProductClass,
+      testType: "write-probe", parameterPath: pathValue, requestedValue: redactValue(live.value, candidate.sensitive),
+      taskResult: result, status: "queued",
+    });
+    res.json({ ok: true, status: "queued", runId: run.id, path: pathValue, requestedValue: redactValue(live.value, candidate.sensitive), result });
+  } catch (e) {
+    res.status(502).json({ ok: false, error: "Falha ao executar write-probe", details: e.details || e.message });
+  }
+});
+
+// V11: endpoint mantido apenas para evitar chamadas antigas. A lógica baseada em Device.User.1/2 foi removida.
+app.post("/api/acs/devices/:deviceId/enable-reset-recovery", async (_req, res) => {
+  res.status(410).json({
+    error: "Recuperação pós-reset automática está desativada na V12. Use o Laboratório MR60X para descobrir e validar o mecanismo suportado pelo firmware.",
+    code: "RESET_RECOVERY_LAB_ONLY",
+  });
 });
 
 app.get("/api/work-orders", async (_req, res, next) => {
