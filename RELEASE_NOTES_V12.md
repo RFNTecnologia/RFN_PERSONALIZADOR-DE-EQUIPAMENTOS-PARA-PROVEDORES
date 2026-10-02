@@ -15,3 +15,6 @@ A lógica experimental baseada em `Device.User.1/2` foi removida da V12. O endpo
 
 ## Segurança do pacote
 O release não contém `.env` nem o diretório `.git`. Use `.env.example` como modelo e gere novos segredos para o ambiente.
+
+## V12.1 — fechamento do ciclo de tarefas
+O laboratório não chama mais toda tarefa de 'queued'. Ele respeita os códigos do NBI: 200 significa execução concluída, 202 significa enfileirada para próximo Inform. Leituras executadas consultam novamente o CPE e registram o valor observado.

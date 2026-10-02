@@ -34,7 +34,7 @@ const migrationsDirectory = path.join(__dirname, "migrations");
 app.use(express.json({ limit: "5mb" }));
 app.use(express.static(path.join(__dirname, "../frontend")));
 
-async function nbiFetch(endpoint, options = {}) {
+async function nbiRequest(endpoint, options = {}) {
   const response = await fetch(`${genieAcsNbiUrl}${endpoint}`, {
     ...options,
     headers: { "content-type": "application/json", ...(options.headers || {}) },
@@ -48,7 +48,12 @@ async function nbiFetch(endpoint, options = {}) {
     error.details = data;
     throw error;
   }
-  return data;
+  return { status: response.status, data };
+}
+
+async function nbiFetch(endpoint, options = {}) {
+  const result = await nbiRequest(endpoint, options);
+  return result.data;
 }
 
 
@@ -616,12 +621,17 @@ app.post("/api/acs/devices/:deviceId/lab/refresh", async (req, res) => {
     const device = Array.isArray(devices) ? devices[0] : null;
     if (!device) return res.status(404).json({ error: "CPE não encontrado no GenieACS" });
     const task = { name: "refreshObject", objectName: "" };
-    const result = await nbiFetch(`/devices/${encodeURIComponent(deviceId)}/tasks?connection_request`, { method: "POST", body: JSON.stringify(task) });
+    const result = await nbiRequest(`/devices/${encodeURIComponent(deviceId)}/tasks?timeout=5000&connection_request`, { method: "POST", body: JSON.stringify(task) });
+    const status = result.status === 200 ? "executed" : "queued";
+    const latestDevices = status === "executed"
+      ? await nbiFetch(`/devices/?query=${encodeURIComponent(JSON.stringify({ _id: deviceId }))}`)
+      : [];
+    const latestDevice = Array.isArray(latestDevices) ? latestDevices[0] : null;
     const run = await insertLabRun({
       deviceId, manufacturer: device?._deviceId?._Manufacturer, model: device?._deviceId?._ProductClass,
-      testType: "refresh", taskResult: result, status: "queued",
+      testType: "refresh", taskResult: result.data, observedValue: latestDevice ? { lastInform: latestDevice._lastInform || null } : null, status,
     });
-    res.json({ ok: true, status: "queued", runId: run.id, result });
+    res.status(result.status === 202 ? 202 : 200).json({ ok: true, status, runId: run.id, result: result.data, observed: latestDevice ? { lastInform: latestDevice._lastInform || null } : null });
   } catch (e) {
     res.status(502).json({ ok: false, error: "Falha ao solicitar refreshObject", details: e.details || e.message });
   }
@@ -638,12 +648,20 @@ app.post("/api/acs/devices/:deviceId/lab/read", async (req, res) => {
     const candidate = modelCatalogFor(device).find((item) => item.path === pathValue);
     if (!candidate) return res.status(422).json({ error: "Parâmetro fora do catálogo determinístico do modelo" });
     const task = { name: "getParameterValues", parameterNames: [pathValue] };
-    const result = await nbiFetch(`/devices/${encodeURIComponent(deviceId)}/tasks?connection_request`, { method: "POST", body: JSON.stringify(task) });
+    const result = await nbiRequest(`/devices/${encodeURIComponent(deviceId)}/tasks?timeout=5000&connection_request`, { method: "POST", body: JSON.stringify(task) });
+    const status = result.status === 200 ? "executed" : "queued";
+    let observedValue = null;
+    if (status === "executed") {
+      const latestDevices = await nbiFetch(`/devices/?query=${encodeURIComponent(JSON.stringify({ _id: deviceId }))}`);
+      const latestDevice = Array.isArray(latestDevices) ? latestDevices[0] : null;
+      const live = latestDevice ? flattenDevice(latestDevice).find((item) => item.path === pathValue) : null;
+      observedValue = live ? redactValue(live.value, candidate.sensitive) : null;
+    }
     const run = await insertLabRun({
       deviceId, manufacturer: device?._deviceId?._Manufacturer, model: device?._deviceId?._ProductClass,
-      testType: "read", parameterPath: pathValue, taskResult: result, status: "queued",
+      testType: "read", parameterPath: pathValue, taskResult: result.data, observedValue, status,
     });
-    res.json({ ok: true, status: "queued", runId: run.id, path: pathValue, result });
+    res.status(result.status === 202 ? 202 : 200).json({ ok: true, status, runId: run.id, path: pathValue, observedValue, result: result.data });
   } catch (e) {
     res.status(502).json({ ok: false, error: "Falha ao solicitar leitura ao CPE", details: e.details || e.message });
   }
@@ -663,15 +681,23 @@ app.post("/api/acs/devices/:deviceId/lab/write-probe", async (req, res) => {
     const live = flattenDevice(device).find((item) => item.path === pathValue);
     if (!live) return res.status(409).json({ error: "Parâmetro ainda não está presente no cache; execute Refresh/Inform antes do teste" });
     if (live.writable !== true) return res.status(409).json({ error: "O CPE/firmware reportou o parâmetro como não gravável" });
-    const parameterValues = [[pathValue, live.value]];
+    const parameterValues = [[pathValue, live.value, live.type || candidate.type || "xsd:string"]];
     const task = { name: "setParameterValues", parameterValues };
-    const result = await nbiFetch(`/devices/${encodeURIComponent(deviceId)}/tasks?connection_request`, { method: "POST", body: JSON.stringify(task) });
+    const result = await nbiRequest(`/devices/${encodeURIComponent(deviceId)}/tasks?timeout=5000&connection_request`, { method: "POST", body: JSON.stringify(task) });
+    const status = result.status === 200 ? "executed" : "queued";
+    let observedValue = null;
+    if (status === "executed") {
+      const latestDevices = await nbiFetch(`/devices/?query=${encodeURIComponent(JSON.stringify({ _id: deviceId }))}`);
+      const latestDevice = Array.isArray(latestDevices) ? latestDevices[0] : null;
+      const latestLive = latestDevice ? flattenDevice(latestDevice).find((item) => item.path === pathValue) : null;
+      observedValue = latestLive ? redactValue(latestLive.value, candidate.sensitive) : null;
+    }
     const run = await insertLabRun({
       deviceId, manufacturer: device?._deviceId?._Manufacturer, model: device?._deviceId?._ProductClass,
       testType: "write-probe", parameterPath: pathValue, requestedValue: redactValue(live.value, candidate.sensitive),
-      taskResult: result, status: "queued",
+      observedValue, taskResult: result.data, status,
     });
-    res.json({ ok: true, status: "queued", runId: run.id, path: pathValue, requestedValue: redactValue(live.value, candidate.sensitive), result });
+    res.status(result.status === 202 ? 202 : 200).json({ ok: true, status, runId: run.id, path: pathValue, requestedValue: redactValue(live.value, candidate.sensitive), observedValue, result: result.data });
   } catch (e) {
     res.status(502).json({ ok: false, error: "Falha ao executar write-probe", details: e.details || e.message });
   }

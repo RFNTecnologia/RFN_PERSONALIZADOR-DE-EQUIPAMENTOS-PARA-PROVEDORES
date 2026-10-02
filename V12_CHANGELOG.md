@@ -7,3 +7,7 @@
 - Histórico persistente em `lab_runs`.
 - Provisionamento genérico passa a preferir caminhos exatos conhecidos no MR60X.
 - Endpoint legado de recuperação retorna HTTP 410.
+
+- V12.1: laboratório passou a usar timeout+connection_request do NBI e distinguir 200=executado de 202=enfileirado.
+- V12.1: leituras executadas registram valor observado imediatamente após a tarefa.
+- V12.1: write-probe envia também o tipo XSD quando conhecido.
