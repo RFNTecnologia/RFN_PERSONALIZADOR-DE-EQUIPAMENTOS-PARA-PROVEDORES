@@ -18,3 +18,11 @@ O release não contém `.env` nem o diretório `.git`. Use `.env.example` como m
 
 ## V12.1 — fechamento do ciclo de tarefas
 O laboratório não chama mais toda tarefa de 'queued'. Ele respeita os códigos do NBI: 200 significa execução concluída, 202 significa enfileirada para próximo Inform. Leituras executadas consultam novamente o CPE e registram o valor observado.
+
+
+## V12.2 — fechamento do ciclo do laboratório
+- Corrigida a interpretação do histórico: tarefa `queued` não é tratada como resultado de leitura em cache.
+- O laboratório reconcilia automaticamente leituras, refresh e write-probe após um novo Inform do CPE.
+- Leituras e write-probes duplicados enquanto uma tarefa equivalente estiver enfileirada não criam novos registros.
+- Novos testes de leitura/write-probe exigem Inform recente do CPE.
+- O painel exibe o estado de conectividade do CPE a partir do último Inform.

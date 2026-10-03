@@ -119,3 +119,10 @@ A V12 remove a dependência experimental de `Device.User.1/2` para recuperação
 - `Write-probe`: reenvia o valor atual somente para parâmetros marcados como seguros e reportados como graváveis. O status `queued` não é tratado como prova de aplicação; a confirmação depende do próximo Inform/refresh.
 
 O endpoint legado `enable-reset-recovery` responde HTTP 410 e não tenta mais alterar `Device.User.1/2`.
+
+
+## V12.2 — laboratório e execução real
+
+O laboratório distingue tarefa enfileirada de resultado confirmado. Leituras e write-probes duplicados são evitados enquanto houver uma tarefa equivalente pendente. Quando o CPE fizer um novo Inform, a abertura do Laboratório reconcilia automaticamente os testes pendentes com os timestamps reais do cache.
+
+Para execução imediata, o MR60X precisa estar em comunicação CWMP com o ACS. O botão `RefreshObject` pode enfileirar a solicitação, mas o GenieACS só retorna HTTP 200 quando a tarefa foi executada; HTTP 202 significa que ficou para o próximo Inform, conforme a API oficial do GenieACS.
