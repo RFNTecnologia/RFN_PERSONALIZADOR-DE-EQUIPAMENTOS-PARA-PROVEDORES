@@ -3,14 +3,14 @@ services:
     image: mongo:8.0
     restart: unless-stopped
     environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:?Configure MONGO_ROOT_USER no .env}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?Configure MONGO_ROOT_PASSWORD no .env}
     volumes:
       - mongo_data:/data/db
       - mongo_config:/data/configdb
-    networks: [backend]
+    networks: [ backend ]
     healthcheck:
-      test: ["CMD-SHELL", "mongosh --quiet -u $$MONGO_INITDB_ROOT_USERNAME -p $$MONGO_INITDB_ROOT_PASSWORD --authenticationDatabase admin --eval 'db.adminCommand({ping:1}).ok' | grep 1"]
+      test: [ "CMD-SHELL", "mongosh --quiet -u $$MONGO_INITDB_ROOT_USERNAME -p $$MONGO_INITDB_ROOT_PASSWORD --authenticationDatabase admin --eval 'db.adminCommand({ping:1}).ok' | grep 1" ]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -19,18 +19,19 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
-    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}", "--appendonly", "yes"]
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Configure REDIS_PASSWORD no .env}
+    command: [ "redis-server", "--requirepass", "${REDIS_PASSWORD:?Configure REDIS_PASSWORD no .env}", "--appendonly", "yes" ]
     volumes:
       - redis_data:/data
-    networks: [backend]
+    networks: [ backend ]
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep PONG"]
+      test: [ "CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep PONG" ]
       interval: 15s
       timeout: 5s
       retries: 10
 
   postgres:
+    profiles: [ "container-db" ]
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
@@ -39,10 +40,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./postgres/init:/docker-entrypoint-initdb.d:ro
-    networks: [backend]
+      - ./backend/migrations:/docker-entrypoint-initdb.d:ro
+    networks: [ backend ]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" ]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -61,8 +62,8 @@ services:
       GENIEACS_MONGODB_CONNECTION_URL: mongodb://${MONGO_ROOT_USER}:${MONGO_ROOT_PASSWORD}@mongo:27017/genieacs?authSource=admin
       GENIEACS_REDIS_HOST: redis
       GENIEACS_REDIS_PORT: 6379
-      GENIEACS_REDIS_PASSWORD: ${REDIS_PASSWORD}
-      GENIEACS_UI_JWT_SECRET: ${GENIEACS_UI_JWT_SECRET}
+      GENIEACS_REDIS_PASSWORD: ${REDIS_PASSWORD:?Configure REDIS_PASSWORD no .env}
+      GENIEACS_UI_JWT_SECRET: ${GENIEACS_UI_JWT_SECRET:?Configure GENIEACS_UI_JWT_SECRET no .env}
       GENIEACS_EXT_DIR: /opt/genieacs/ext
       GENIEACS_CWMP_INTERFACE: 0.0.0.0
       GENIEACS_CWMP_PORT: 7547
@@ -82,39 +83,54 @@ services:
       - "7557"
       - "7567"
       - "3000"
-    networks: [backend, edge]
+    networks: [ backend, edge ]
 
   api:
     build: ./backend
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
+      genieacs:
+        condition: service_started
     environment:
       PORT: 8080
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_URL: ${DATABASE_URL:-${SUPABASE_DB_URL:?Configure DATABASE_URL ou SUPABASE_DB_URL no arquivo .env}}
       GENIEACS_NBI_URL: http://genieacs:7557
+      API_ADMIN_USERNAME: ${API_ADMIN_USERNAME:?Configure API_ADMIN_USERNAME no arquivo .env}
+      API_ADMIN_PASSWORD: ${API_ADMIN_PASSWORD:?Configure API_ADMIN_PASSWORD no arquivo .env}
+      CPE_ADMIN_PASSWORD: ${CPE_ADMIN_PASSWORD:?Execute scripts/bootstrap-local.ps1 para gerar CPE_ADMIN_PASSWORD}
+      API_SESSION_SECRET: ${API_SESSION_SECRET:?Configure API_SESSION_SECRET no arquivo .env}
+      API_COOKIE_SECURE: ${API_COOKIE_SECURE:-false}
     expose:
       - "8080"
-    networks: [backend, edge]
+    healthcheck:
+      test: [ "CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      backend: {}
+      edge:
+        ipv4_address: 172.24.0.10
 
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
-    depends_on: [api, genieacs]
+    depends_on: [ api, genieacs ]
     ports:
       - "80:80"
-      - "443:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - nginx_certs:/etc/nginx/certs
       - ./frontend:/usr/share/nginx/html:ro
-    networks: [edge]
+    networks: [ edge ]
 
 networks:
   backend:
     internal: true
   edge:
+    ipam:
+      config:
+        - subnet: 172.24.0.0/24
 
 volumes:
   mongo_data:
@@ -122,4 +138,3 @@ volumes:
   redis_data:
   postgres_data:
   genieacs_logs:
-  nginx_certs:
