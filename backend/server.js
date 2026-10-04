@@ -550,6 +550,67 @@ app.post("/api/acs/devices/:deviceId/provision", async (req, res) => {
   }
 });
 
+app.post("/api/acs/devices/:deviceId/service-block", async (req, res) => {
+  try {
+    const deviceId = req.params.deviceId;
+    const blocked = req.body?.blocked === true;
+    const parameterPath = "Device.PPP.Interface.1.Enable";
+    const devices = await nbiFetch(`/devices/?query=${encodeURIComponent(JSON.stringify({ _id: deviceId }))}`);
+    const device = Array.isArray(devices) ? devices[0] : null;
+    if (!device) return res.status(404).json({ error: "CPE não encontrado no GenieACS" });
+
+    const manufacturer = String(device?._deviceId?._Manufacturer || "").trim().toLowerCase();
+    const model = String(device?._deviceId?._ProductClass || "").trim().toUpperCase();
+    if (!(manufacturer === "mercusys" && model === "MR60X")) {
+      return res.status(409).json({ error: "Bloqueio por PPPoE disponível apenas para o catálogo MR60X nesta versão" });
+    }
+
+    const live = flattenDevice(device).find((item) => item.path === parameterPath);
+    if (!live || live.writable !== true) {
+      return res.status(409).json({ error: "Device.PPP.Interface.1.Enable não está disponível como gravável no CPE" });
+    }
+
+    const value = !blocked;
+    const task = { name: "setParameterValues", parameterValues: [[parameterPath, value]] };
+    const result = await nbiRequest(`/devices/${encodeURIComponent(deviceId)}/tasks?connection_request`, {
+      method: "POST",
+      body: JSON.stringify(task),
+    });
+    const status = result.status === 200 ? "executed" : "queued";
+
+    if (status === "executed") {
+      await pool.query(
+        "update equipment set service_status=$1 where acs_device_id=$2",
+        [blocked ? "blocked" : "enabled", deviceId]
+      );
+    }
+
+    const run = await insertLabRun({
+      deviceId,
+      manufacturer: device?._deviceId?._Manufacturer,
+      model: device?._deviceId?._ProductClass,
+      testType: blocked ? "service-block" : "service-unblock",
+      parameterPath,
+      requestedValue: value,
+      taskResult: result.data,
+      observedValue: null,
+      status,
+    });
+
+    res.status(result.status === 202 ? 202 : 200).json({
+      ok: true,
+      blocked,
+      status,
+      runId: run.id,
+      parameterPath,
+      requestedValue: value,
+      result: result.data,
+    });
+  } catch (e) {
+    res.status(502).json({ ok: false, error: "Falha ao alterar o estado do serviço no CPE", details: e.details || e.message });
+  }
+});
+
 app.post("/api/acs/devices/:deviceId/apply-profile", async (req, res) => {
   try {
     const profileId = Number(req.body.profile_id);
