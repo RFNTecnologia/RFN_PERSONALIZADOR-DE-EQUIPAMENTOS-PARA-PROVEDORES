@@ -365,16 +365,30 @@ async function renderMr60xLab(acsId) {
   $('deviceTabBody').innerHTML = '<div class="card"><div class="hint">Consultando laboratório determinístico do modelo...</div></div>';
   try {
     const d = await api(`/api/acs/devices/${encodeURIComponent(acsId)}/lab`);
-    const badge = d.supported ? '<span class="badge online">Catálogo MR60X ativo</span>' : '<span class="badge unknown">Modelo sem catálogo</span>'; const conn = d.connection?.state === 'online' ? '<span class="badge online">CPE online</span>' : '<span class="badge unknown">Sem Inform recente</span>';
+    const badge = d.supported ? '<span class="badge online">Catálogo MR60X ativo</span>' : '<span class="badge unknown">Modelo sem catálogo</span>';
     const candidates = (d.candidates || []).map(c => {
       const value = c.sensitive ? (c.discovered ? '[redacted]' : '—') : (c.discovered ? esc(c.value) : '—');
       const writable = c.discovered ? (c.writable ? 'gravável' : 'somente leitura') : 'não observado';
       const probe = c.safeProbe && c.discovered && c.writable ? `<button class="secondary" onclick="labWriteProbe('${esc(acsId)}','${esc(c.path)}')">Write-probe</button>` : '';
       const read = c.discovered ? `<button class="secondary" onclick="labRead('${esc(acsId)}','${esc(c.path)}')">Ler</button>` : '';
-      return `<div class="kv" style="gap:10px;align-items:flex-start"><div style="min-width:0;flex:1"><b>${esc(c.label)}</b><div class="hint mono">${esc(c.path)}</div><div class="hint">${writable} · tipo ${esc(c.type || '—')} · valor ${value}</div></div><div class="actions">${read}${probe}</div></div>`;
+      const inputId = `lab_value_${String(c.id || '').replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+      let editor = '';
+      if (c.discovered && c.writable) {
+        const type = String(c.type || c.type === '' ? c.type : 'xsd:string').toLowerCase();
+        if (type.includes('boolean')) {
+          const current = c.value === true ? 'true' : c.value === false ? 'false' : '';
+          editor = `<select id="${inputId}"><option value="true" ${current === 'true' ? 'selected' : ''}>true</option><option value="false" ${current === 'false' ? 'selected' : ''}>false</option></select>`;
+        } else if (/(unsigned|short|long|int|integer|uint|float|double|decimal)/.test(type)) {
+          editor = `<input id="${inputId}" type="number" value="${c.sensitive ? '' : esc(c.value ?? '')}" step="1">`;
+        } else {
+          editor = `<input id="${inputId}" type="${c.sensitive ? 'password' : 'text'}" value="${c.sensitive ? '' : esc(c.value ?? '')}" placeholder="Novo valor">`;
+        }
+      }
+      const write = c.discovered && c.writable ? `${editor}<button onclick="labWriteValue('${esc(acsId)}','${esc(c.path)}','${esc(c.id)}')">Escrever</button>` : '';
+      return `<div class="kv" style="gap:10px;align-items:flex-start"><div style="min-width:0;flex:1"><b>${esc(c.label)}</b><div class="hint mono">${esc(c.path)}</div><div class="hint">${writable} · tipo ${esc(c.type || '—')} · valor ${value}</div>${write ? `<div class="actions" style="margin-top:8px;flex-wrap:wrap">${write}</div>` : ''}</div><div class="actions">${read}${probe}</div></div>`;
     }).join('');
-    const runs = (d.runs || []).map(r => { const badge = r.status === 'executed' || r.status === 'confirmed' ? 'online' : 'unknown'; return `<tr><td>${esc(r.id)}</td><td>${esc(r.test_type)}</td><td class="mono">${esc(r.parameter_path || '—')}</td><td><span class="badge ${badge}">${esc(r.status)}</span></td><td>${esc(r.interpretation || '')}</td><td class="mono">${esc(r.created_at)}</td></tr>`; }).join('') || '<tr><td colspan="6" class="empty">Nenhum teste registrado.</td></tr>';
-    $('deviceTabBody').innerHTML = `<div class="card"><div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap"><div><h3 style="margin:0">Laboratório MR60X</h3><p class="hint">${d.supported ? 'Catálogo exato do MERCUSYS MR60X. Nenhuma busca genérica cria caminho de escrita.' : 'Este modelo ainda não possui catálogo determinístico.'}</p></div><div class="actions"><button onclick="labRefresh('${esc(acsId)}')">RefreshObject</button><button class="secondary" onclick="showDeviceTab('lab',document.querySelector('.device-tab.active'),null,'${esc(acsId)}')">Atualizar resultados</button></div></div><div class="hint-block">${badge} ${conn} Último Inform: <span class="mono">${esc(d.lastInform || '—')}</span></div>${candidates ? `<div class="param-list" style="margin-top:12px">${candidates}</div>` : ''}</div><div class="card" style="margin-top:12px"><h3 style="margin-top:0">Histórico do laboratório</h3><div class="table-wrap"><table><thead><tr><th>ID</th><th>Teste</th><th>Parâmetro</th><th>Status</th><th>Interpretação</th><th>Data</th></tr></thead><tbody>${runs}</tbody></table></div><p class="hint">"queued" significa que o ACS aceitou a tarefa para o próximo Inform. O histórico é reconciliado automaticamente quando o CPE realmente volta a falar com o ACS.</p></div>`;
+    const runs = (d.runs || []).map(r => `<tr><td>${esc(r.id)}</td><td>${esc(r.test_type)}</td><td class="mono">${esc(r.parameter_path || '—')}</td><td><span class="badge ${r.status === 'executed' ? 'online' : 'unknown'}">${esc(r.status)}</span></td><td>${esc(r.interpretation || '')}</td><td class="mono">${esc(r.created_at)}</td></tr>`).join('') || '<tr><td colspan="6" class="empty">Nenhum teste registrado.</td></tr>';
+    $('deviceTabBody').innerHTML = `<div class="card"><div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap"><div><h3 style="margin:0">Laboratório MR60X</h3><p class="hint">${d.supported ? 'Catálogo exato do MERCUSYS MR60X. Nenhuma busca genérica cria caminho de escrita.' : 'Este modelo ainda não possui catálogo determinístico.'}</p></div><div class="actions"><button onclick="labRefresh('${esc(acsId)}')">RefreshObject</button><button class="secondary" onclick="showDeviceTab('lab',document.querySelector('.device-tab.active'),null,'${esc(acsId)}')">Atualizar resultados</button></div></div><div class="hint-block">${badge} Último Inform: <span class="mono">${esc(d.lastInform || '—')}</span></div>${candidates ? `<div class="param-list" style="margin-top:12px">${candidates}</div>` : ''}</div><div class="card" style="margin-top:12px"><h3 style="margin-top:0">Histórico do laboratório</h3><div class="table-wrap"><table><thead><tr><th>ID</th><th>Teste</th><th>Parâmetro</th><th>Status</th><th>Interpretação</th><th>Data</th></tr></thead><tbody>${runs}</tbody></table></div><p class="hint">"queued" significa que o ACS aceitou/enfileirou a tarefa; o resultado real no CPE deve ser confirmado após novo Inform/refresh.</p></div>`;
   } catch (e) { $('deviceTabBody').innerHTML = `<div class="card empty">${esc(e.message)}</div>`; }
 }
 async function labRefresh(acsId) {
@@ -382,6 +396,20 @@ async function labRefresh(acsId) {
 }
 async function labRead(acsId, pathValue) {
   try { const r = await api(`/api/acs/devices/${encodeURIComponent(acsId)}/lab/read`, { method:'POST', body:JSON.stringify({path:pathValue}) }); showStatus(`Leitura ${r.status === 'executed' ? 'executada' : 'enfileirada'} para ${pathValue}. ${r.status === 'executed' ? `Valor observado: ${r.observedValue ?? '—'}.` : 'Confirme após novo Inform.'} Teste #${r.runId}.`); } catch(e) { showStatus(e.message,false); }
+}
+async function labWriteValue(acsId, pathValue, candidateId) {
+  const inputId = `lab_value_${String(candidateId || '').replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+  const field = $(inputId);
+  if (!field) { showStatus('Campo de escrita não encontrado.', false); return; }
+  const value = field.value;
+  if (value === '') { showStatus('Informe um valor antes de escrever.', false); return; }
+  const ok = window.confirm(`Enviar o valor informado para ${pathValue}?\n\nEssa ação altera o CPE. Para o teste de bloqueio, false desabilita o PPPoE.`);
+  if (!ok) return;
+  try {
+    const r = await api(`/api/acs/devices/${encodeURIComponent(acsId)}/lab/write`, { method:'POST', body:JSON.stringify({path:pathValue, value}) });
+    showStatus(`Escrita ${r.status === 'executed' ? 'executada' : 'enfileirada'} para ${pathValue}. ${r.status === 'executed' ? `Valor observado: ${r.observedValue ?? '—'}.` : 'Confirme após novo Inform.'} Teste #${r.runId}.`);
+    if (r.status === 'executed') setTimeout(() => showDeviceTab('lab', document.querySelector('.device-tab.active'), null, acsId), 250);
+  } catch(e) { showStatus(e.message,false); }
 }
 async function labWriteProbe(acsId, pathValue) {
   const ok = window.confirm(`O teste reenviará o valor ATUAL de ${pathValue} para verificar se o CPE aceita setParameterValues sem alterar efetivamente o valor. Continuar?`);

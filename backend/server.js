@@ -450,59 +450,6 @@ function redactValue(value, sensitive = false) {
   return sensitive ? (value === null || value === undefined ? null : "[redacted]") : value;
 }
 
-function informAgeMs(lastInform) {
-  if (!lastInform) return Number.POSITIVE_INFINITY;
-  const ts = Date.parse(lastInform);
-  return Number.isFinite(ts) ? Math.max(0, Date.now() - ts) : Number.POSITIVE_INFINITY;
-}
-
-function connectionState(lastInform) {
-  const age = informAgeMs(lastInform);
-  if (!lastInform) return "unknown";
-  if (age <= 3 * 60 * 1000) return "online";
-  return "stale";
-}
-
-async function reconcileLabRuns(deviceId, device) {
-  const values = flattenDevice(device);
-  const liveByPath = new Map(values.map((item) => [item.path, item]));
-  const latestInformMs = Date.parse(device?._lastInform || "");
-  const runs = await pool.query(
-    `select id, test_type, parameter_path, status, requested_value, observed_value, task_result, created_at
-     from lab_runs where device_id=$1 and status='queued' order by id desc limit 50`,
-    [deviceId]
-  );
-
-  for (const run of runs.rows) {
-    const createdMs = new Date(run.created_at).getTime();
-    const live = run.parameter_path ? liveByPath.get(run.parameter_path) : null;
-    const liveMs = live?.timestamp ? Date.parse(live.timestamp) : Number.NaN;
-    const informedAfterTask = Number.isFinite(latestInformMs) && latestInformMs > createdMs;
-    const parameterRefreshedAfterTask = Number.isFinite(liveMs) && liveMs > createdMs;
-
-    if (run.test_type === "refresh" && informedAfterTask) {
-      await pool.query(
-        `update lab_runs set status='executed', observed_value=$1::jsonb, task_result=$2::jsonb where id=$3`,
-        [JSON.stringify({ lastInform: device._lastInform || null }), JSON.stringify({ ...(run.task_result || {}), reconciled: true, reconciled_at: new Date().toISOString() }), run.id]
-      );
-    } else if (run.test_type === "read" && (parameterRefreshedAfterTask || informedAfterTask)) {
-      const candidate = modelCatalogFor(device).find((item) => item.path === run.parameter_path);
-      const observedValue = live ? redactValue(live.value, candidate?.sensitive) : null;
-      await pool.query(
-        `update lab_runs set status='executed', observed_value=$1::jsonb, task_result=$2::jsonb where id=$3`,
-        [JSON.stringify(observedValue), JSON.stringify({ ...(run.task_result || {}), reconciled: true, reconciled_at: new Date().toISOString() }), run.id]
-      );
-    } else if (run.test_type === "write-probe" && (parameterRefreshedAfterTask || informedAfterTask)) {
-      const candidate = modelCatalogFor(device).find((item) => item.path === run.parameter_path);
-      const observedValue = live ? redactValue(live.value, candidate?.sensitive) : null;
-      await pool.query(
-        `update lab_runs set status='confirmed', observed_value=$1::jsonb, task_result=$2::jsonb where id=$3`,
-        [JSON.stringify(observedValue), JSON.stringify({ ...(run.task_result || {}), reconciled: true, reconciled_at: new Date().toISOString() }), run.id]
-      );
-    }
-  }
-}
-
 async function insertLabRun(data) {
   const q = await pool.query(
     `insert into lab_runs (device_id, manufacturer, model, test_type, parameter_path, requested_value, observed_value, task_result, status)
@@ -632,7 +579,6 @@ app.get("/api/acs/devices/:deviceId/lab", async (req, res) => {
     const device = Array.isArray(devices) ? devices[0] : null;
     if (!device) return res.status(404).json({ error: "CPE não encontrado no GenieACS" });
     const identity = device._deviceId || {};
-    await reconcileLabRuns(deviceId, device);
     const catalog = catalogSnapshot(device);
     const liveByPath = new Map(flattenDevice(device).map((item) => [item.path, item]));
     const runs = await pool.query(
@@ -648,13 +594,9 @@ app.get("/api/acs/devices/:deviceId/lab", async (req, res) => {
         cache_value: live ? redactValue(live.value, modelCatalogFor(device).find((c) => c.path === run.parameter_path)?.sensitive) : null,
         cache_writable: live?.writable === true,
         cache_type: live?.type || null,
-        interpretation: run.status === "queued"
-          ? "tarefa enfileirada no ACS; aguardando novo Inform do CPE"
-          : run.test_type === "write-probe"
-            ? "write-probe confirmado após Inform; isso não prova sozinho persistência após reboot/reset"
-            : run.test_type === "read"
-              ? (live ? "leitura executada; valor confirmado no cache após a tarefa" : "leitura executada, mas o parâmetro não foi encontrado no cache")
-              : "refresh executado; novo Inform recebido do CPE",
+        interpretation: run.test_type === "write-probe"
+          ? (live ? "valor presente no cache após consulta; isso não prova sozinho que a escrita foi persistida" : "aguardando novo Inform/refresh")
+          : (live ? "valor observado no cache atual" : "aguardando novo Inform/refresh"),
       };
     });
     res.json({
@@ -664,7 +606,6 @@ app.get("/api/acs/devices/:deviceId/lab", async (req, res) => {
       model: { manufacturer: identity._Manufacturer || null, productClass: identity._ProductClass || null },
       lastInform: device._lastInform || null,
       lastBoot: device._lastBoot || null,
-      connection: { state: connectionState(device._lastInform || null), ageMs: informAgeMs(device._lastInform || null) },
       candidates: catalog,
       runs: enrichedRuns,
     });
@@ -706,16 +647,6 @@ app.post("/api/acs/devices/:deviceId/lab/read", async (req, res) => {
     if (!device) return res.status(404).json({ error: "CPE não encontrado no GenieACS" });
     const candidate = modelCatalogFor(device).find((item) => item.path === pathValue);
     if (!candidate) return res.status(422).json({ error: "Parâmetro fora do catálogo determinístico do modelo" });
-    if (connectionState(device._lastInform || null) !== "online") {
-      return res.status(409).json({ error: "CPE sem Inform recente. Conecte o MR60X ao ACS antes de iniciar uma nova leitura." });
-    }
-    const existing = await pool.query(
-      `select id from lab_runs where device_id=$1 and test_type='read' and parameter_path=$2 and status='queued' order by id desc limit 1`,
-      [deviceId, pathValue]
-    );
-    if (existing.rowCount) {
-      return res.json({ ok: true, status: "queued", runId: existing.rows[0].id, path: pathValue, observedValue: null, deduplicated: true, result: null });
-    }
     const task = { name: "getParameterValues", parameterNames: [pathValue] };
     const result = await nbiRequest(`/devices/${encodeURIComponent(deviceId)}/tasks?timeout=5000&connection_request`, { method: "POST", body: JSON.stringify(task) });
     const status = result.status === 200 ? "executed" : "queued";
@@ -736,6 +667,66 @@ app.post("/api/acs/devices/:deviceId/lab/read", async (req, res) => {
   }
 });
 
+app.post("/api/acs/devices/:deviceId/lab/write", async (req, res) => {
+  try {
+    const deviceId = req.params.deviceId;
+    const pathValue = String(req.body?.path || "").trim();
+    const rawValue = req.body?.value;
+    if (!pathValue) return res.status(400).json({ error: "path é obrigatório" });
+    if (rawValue === undefined) return res.status(400).json({ error: "value é obrigatório" });
+
+    const devices = await nbiFetch(`/devices/?query=${encodeURIComponent(JSON.stringify({ _id: deviceId }))}`);
+    const device = Array.isArray(devices) ? devices[0] : null;
+    if (!device) return res.status(404).json({ error: "CPE não encontrado no GenieACS" });
+
+    const candidate = modelCatalogFor(device).find((item) => item.path === pathValue);
+    if (!candidate) return res.status(422).json({ error: "Parâmetro fora do catálogo determinístico do modelo" });
+
+    const live = flattenDevice(device).find((item) => item.path === pathValue);
+    if (!live) return res.status(409).json({ error: "Parâmetro ainda não está presente no cache; execute Refresh/Inform antes da escrita" });
+    if (live.writable !== true) return res.status(409).json({ error: "O CPE/firmware reportou o parâmetro como não gravável" });
+
+    const type = String(live.type || candidate.type || "xsd:string").toLowerCase();
+    let value = rawValue;
+    if (type.includes("boolean")) {
+      if (rawValue === true || rawValue === false) value = rawValue;
+      else if (String(rawValue).toLowerCase() === "true") value = true;
+      else if (String(rawValue).toLowerCase() === "false") value = false;
+      else return res.status(400).json({ error: "Valor booleano inválido; use true ou false" });
+    } else if (/(unsigned|short|long|int|integer|uint|float|double|decimal)/.test(type)) {
+      const numeric = Number(rawValue);
+      if (!Number.isFinite(numeric)) return res.status(400).json({ error: "Valor numérico inválido" });
+      value = numeric;
+    } else {
+      value = String(rawValue);
+    }
+
+    const parameterValues = [[pathValue, value, live.type || candidate.type || "xsd:string"]];
+    const task = { name: "setParameterValues", parameterValues };
+    const result = await nbiRequest(`/devices/${encodeURIComponent(deviceId)}/tasks?timeout=5000&connection_request`, {
+      method: "POST", body: JSON.stringify(task)
+    });
+    const status = result.status === 200 ? "executed" : "queued";
+    let observedValue = null;
+    if (status === "executed") {
+      const latestDevices = await nbiFetch(`/devices/?query=${encodeURIComponent(JSON.stringify({ _id: deviceId }))}`);
+      const latestDevice = Array.isArray(latestDevices) ? latestDevices[0] : null;
+      const latestLive = latestDevice ? flattenDevice(latestDevice).find((item) => item.path === pathValue) : null;
+      observedValue = latestLive ? redactValue(latestLive.value, candidate.sensitive) : null;
+    }
+
+    const safeRequested = redactValue(value, candidate.sensitive);
+    const run = await insertLabRun({
+      deviceId, manufacturer: device?._deviceId?._Manufacturer, model: device?._deviceId?._ProductClass,
+      testType: "write", parameterPath: pathValue, requestedValue: safeRequested,
+      observedValue, taskResult: result.data, status,
+    });
+    res.status(result.status === 202 ? 202 : 200).json({ ok: true, status, runId: run.id, path: pathValue, requestedValue: safeRequested, observedValue, result: result.data });
+  } catch (e) {
+    res.status(502).json({ ok: false, error: "Falha ao escrever parâmetro no CPE", details: e.details || e.message });
+  }
+});
+
 app.post("/api/acs/devices/:deviceId/lab/write-probe", async (req, res) => {
   try {
     const deviceId = req.params.deviceId;
@@ -747,16 +738,6 @@ app.post("/api/acs/devices/:deviceId/lab/write-probe", async (req, res) => {
     const candidate = modelCatalogFor(device).find((item) => item.path === pathValue);
     if (!candidate) return res.status(422).json({ error: "Parâmetro fora do catálogo determinístico do modelo" });
     if (!candidate.safeProbe) return res.status(409).json({ error: "Este parâmetro não está autorizado para write-probe seguro" });
-    if (connectionState(device._lastInform || null) !== "online") {
-      return res.status(409).json({ error: "CPE sem Inform recente. Conecte o MR60X ao ACS antes de iniciar um novo write-probe." });
-    }
-    const existing = await pool.query(
-      `select id from lab_runs where device_id=$1 and test_type='write-probe' and parameter_path=$2 and status='queued' order by id desc limit 1`,
-      [deviceId, pathValue]
-    );
-    if (existing.rowCount) {
-      return res.json({ ok: true, status: "queued", runId: existing.rows[0].id, path: pathValue, observedValue: null, deduplicated: true, result: null });
-    }
     const live = flattenDevice(device).find((item) => item.path === pathValue);
     if (!live) return res.status(409).json({ error: "Parâmetro ainda não está presente no cache; execute Refresh/Inform antes do teste" });
     if (live.writable !== true) return res.status(409).json({ error: "O CPE/firmware reportou o parâmetro como não gravável" });
