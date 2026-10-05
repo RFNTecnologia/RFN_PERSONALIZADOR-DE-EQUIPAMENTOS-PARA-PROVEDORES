@@ -79,6 +79,8 @@ services:
       - genieacs_logs:/var/log/genieacs
     ports:
       - "7547:7547"
+      - "7557:7557"
+      - "7567:7567"
     expose:
       - "7557"
       - "7567"
