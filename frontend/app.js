@@ -2,6 +2,7 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]));
 let equipment = [], profiles = [], acs = [], providerSettings = null;
 let currentProvisionValues = [];
+let currentDeviceModal = { id: null, acsId: '', tab: 'info' };
 
 function showStatus(msg, ok = true) {
   $('status').textContent = msg;
@@ -302,18 +303,69 @@ function equipmentActions(id, acsId) {
   const e = equipment.find(x => String(x.id) === String(id)); if (!e) { showStatus('Equipamento não encontrado na lista.', false); return; }
   const options = profiles.map(p => `<option value="${p.id}" ${String(p.id) === String(e.profile_id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
   const identity = `<div class="device-head"><div><h2 style="margin:0">${esc(e.manufacturer)} ${esc(e.model)}</h2><div class="hint">Serial <span class="mono">${esc(e.serial_number)}</span></div></div><span class="badge ${e.status === 'online' ? 'online' : 'unknown'}">${esc(e.status)}</span></div>`;
-  openModal(`${identity}<p class="hint">ACS ID: <span class="mono">${esc(acsId || 'não vinculado')}</span></p><div class="device-tabs"><button class="device-tab active" onclick="showDeviceTab('info',this,${id},'${esc(acsId || '')}')">Informações</button><button class="device-tab" onclick="showDeviceTab('params',this,${id},'${esc(acsId || '')}')">Parâmetros</button><button class="device-tab" onclick="showDeviceTab('wifi',this,${id},'${esc(acsId || '')}')">Wi-Fi</button><button class="device-tab" onclick="showDeviceTab('wan',this,${id},'${esc(acsId || '')}')">WAN</button><button class="device-tab" onclick="showDeviceTab('tr069',this,${id},'${esc(acsId || '')}')">TR-069</button><button class="device-tab" onclick="showDeviceTab('provision',this,${id},'${esc(acsId || '')}')">Provisionamento</button><button class="device-tab" onclick="showDeviceTab('lab',this,${id},'${esc(acsId || '')}')">Laboratório MR60X</button></div><div id="deviceTabBody"><div class="card"><div class="hint">Carregando dados do equipamento...</div></div></div><div class="device-actions"><div><label>Perfil</label><select id="eProfile"><option value="">Sem perfil</option>${options}</select></div><div class="actions"><button onclick="assignProfile(${id})">Associar perfil</button>${acsId ? `<button class="ok" onclick="applyProfile('${esc(acsId)}')">Aplicar perfil</button><button class="secondary" onclick="refreshDevice('${esc(acsId)}')">Atualizar do CPE</button>` : ''}</div></div>`);
+  currentDeviceModal = { id, acsId: acsId || '', tab: 'info' };
+  openModal(`${identity}<p class="hint">ACS ID: <span class="mono">${esc(acsId || 'não vinculado')}</span></p><div id="deviceOperationalSummary"><div class="card" style="margin-top:10px"><div class="hint">Carregando estado operacional do GenieACS...</div></div></div><div class="device-tabs"><button class="device-tab active" onclick="showDeviceTab('info',this,${id},'${esc(acsId || '')}')">Informações</button><button class="device-tab" onclick="showDeviceTab('params',this,${id},'${esc(acsId || '')}')">Parâmetros</button><button class="device-tab" onclick="showDeviceTab('wifi',this,${id},'${esc(acsId || '')}')">Wi-Fi</button><button class="device-tab" onclick="showDeviceTab('wan',this,${id},'${esc(acsId || '')}')">WAN</button><button class="device-tab" onclick="showDeviceTab('tr069',this,${id},'${esc(acsId || '')}')">TR-069</button><button class="device-tab" onclick="showDeviceTab('provision',this,${id},'${esc(acsId || '')}')">Provisionamento</button><button class="device-tab" onclick="showDeviceTab('lab',this,${id},'${esc(acsId || '')}')">Laboratório MR60X</button></div><div id="deviceTabBody"><div class="card"><div class="hint">Carregando dados do equipamento...</div></div></div><div class="device-actions"><div><label>Perfil</label><select id="eProfile"><option value="">Sem perfil</option>${options}</select></div><div class="actions"><button onclick="assignProfile(${id})">Associar perfil</button>${acsId ? `<button class="ok" onclick="applyProfile('${esc(acsId)}')">Aplicar perfil</button><button class="secondary" onclick="refreshDevice('${esc(acsId)}')">Atualizar do CPE</button>` : ''}</div></div>`);
   if (acsId) {
     loadDeviceParameters(id, acsId, 'info');
   } else showDeviceEmpty('Este equipamento não está vinculado a um dispositivo do GenieACS.');
 }
 async function showDeviceTab(tab, btn, id, acsId) {
   document.querySelectorAll('.device-tab').forEach(x => x.classList.remove('active')); btn?.classList.add('active');
+  currentDeviceModal = { id, acsId: acsId || '', tab };
   if (!acsId) { showDeviceEmpty('Este equipamento não está vinculado a um dispositivo do GenieACS.'); return; }
   await loadDeviceParameters(id, acsId, tab);
 }
 function showDeviceEmpty(msg) { $('deviceTabBody').innerHTML = `<div class="card empty">${esc(msg)}</div>`; }
 function valueText(v) { if (v === null || v === undefined || v === '') return '—'; if (typeof v === 'object') return JSON.stringify(v); return String(v); }
+function renderDeviceOperationalSummary(d) {
+  const host = $('deviceOperationalSummary');
+  if (!host) return;
+  const values = Array.isArray(d?.values) ? d.values : [];
+  const valueOf = (...paths) => {
+    for (const path of paths) {
+      const row = values.find(x => x?.path === path);
+      if (row && row.value !== undefined && row.value !== null) {
+        const value = String(row.value).trim();
+        if (value !== '') return value;
+      }
+    }
+    return '';
+  };
+  const findPathValue = predicate => {
+    const row = values.find(x => predicate(String(x?.path || '')) && x?.value !== undefined && x?.value !== null && String(x.value).trim() !== '');
+    return row ? String(row.value).trim() : '';
+  };
+  const wanPort = valueOf('Device.Ethernet.Interface.3.Status', 'InternetGatewayDevice.WANDevice.1.WANEthernetInterfaceConfig.Status');
+  const wanLink = valueOf('Device.Ethernet.Link.2.Status', 'InternetGatewayDevice.WANDevice.1.WANEthernetInterfaceConfig.LinkStatus');
+  const pppStatus = valueOf('Device.PPP.Interface.1.ConnectionStatus', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.ConnectionStatus', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.2.ConnectionStatus');
+  const pppUser = valueOf('Device.PPP.Interface.1.Username', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.2.Username');
+  let wanIp = valueOf('Device.IP.Interface.5.IPv4Address.1.IPAddress', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.ExternalIPAddress', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.2.ExternalIPAddress');
+  if (!wanIp) wanIp = findPathValue(path => /WANPPPConnection\.\d+\.ExternalIPAddress$/.test(path));
+  if (!wanIp || wanIp === '0.0.0.0' || wanIp.toLowerCase() === 'none') wanIp = 'Sem IP atribuído';
+  const lastInform = d?.lastInform || 'Não disponível';
+  const informDate = d?.lastInform ? Date.parse(d.lastInform) : NaN;
+  const informAgeSeconds = Number.isFinite(informDate) ? Math.max(0, Math.floor((Date.now() - informDate) / 1000)) : null;
+  const informState = informAgeSeconds === null ? 'unknown' : informAgeSeconds <= 180 ? 'online' : 'unknown';
+  const informAge = informAgeSeconds === null ? 'idade desconhecida' : informAgeSeconds < 60 ? 'há menos de 1 min' : `há ${Math.floor(informAgeSeconds / 60)} min`;
+  const linkKnown = Boolean(wanPort || wanLink);
+  const linkUp = [wanPort, wanLink].filter(Boolean).every(v => v.toLowerCase() === 'up') && Boolean(wanPort || wanLink);
+  const linkPartial = Boolean(wanPort || wanLink) && !linkUp && [wanPort, wanLink].some(v => v.toLowerCase() === 'up') && ![wanPort, wanLink].some(v => v.toLowerCase() === 'down');
+  const linkLabel = !linkKnown ? 'Não informado' : linkUp ? 'Ativo (EWAN e link)' : linkPartial ? `Parcial (${wanPort || 'EWAN —'} / ${wanLink || 'link —'})` : `Inativo (${wanPort || 'EWAN —'} / ${wanLink || 'link —'})`;
+  const linkClass = linkUp ? 'online' : 'unknown';
+  const pppLow = pppStatus.toLowerCase();
+  const pppClass = pppLow === 'connected' ? 'online' : 'unknown';
+  const pppLabel = pppStatus || 'Não informado';
+  const userLabel = pppUser || 'Vazio / não informado';
+  const pppIpClass = wanIp === 'Sem IP atribuído' ? 'unknown' : 'online';
+  const statCard = (title, main, detail, badgeClass = 'unknown') => `<div class="card" style="padding:12px"><div class="title">${esc(title)}</div><div class="big-value" style="font-size:16px;margin:6px 0;overflow-wrap:anywhere">${esc(main)}</div><span class="badge ${badgeClass}">${esc(detail)}</span></div>`;
+  host.innerHTML = `<div class="card" style="margin-top:10px;padding:14px"><div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap"><div><h3 style="margin:0">Estado operacional</h3><div class="hint">Leitura atual do cache do GenieACS; não altera o roteador.</div></div><button type="button" class="secondary" onclick="reloadDeviceRead()">Recarregar leitura</button></div><div class="grid" style="margin-top:12px">${statCard('Link físico WAN', linkLabel, linkUp ? 'Link ativo' : 'Verificar estado', linkClass)}${statCard('Sessão PPPoE', pppLabel, pppLow === 'connected' ? 'Autenticada' : pppLow === 'connecting' ? 'Tentando conectar' : 'Não confirmada', pppClass)}${statCard('IP WAN', wanIp, wanIp === 'Sem IP atribuído' ? 'Sem IPv4 WAN válido' : 'Endereço reportado pelo CPE', pppIpClass)}${statCard('Usuário PPPoE', userLabel, 'Campo reportado pelo CPE', pppUser ? 'online' : 'unknown')}</div><div class="kv" style="margin-top:12px"><span>Último Inform</span><b class="mono" style="text-align:right">${esc(lastInform)} <span class="badge ${informState}">${esc(informAge)}</span></b></div><div class="hint-block">Para pedir uma nova comunicação, use “Atualizar do CPE”. Depois que o CPE enviar outro Inform, clique em “Recarregar leitura” para ler o cache atualizado.</div></div>`;
+}
+async function reloadDeviceRead() {
+  const { id, acsId, tab } = currentDeviceModal;
+  if (!acsId) return;
+  await loadDeviceParameters(id, acsId, tab || 'info');
+  showStatus('Leitura recarregada do cache do GenieACS. Para consultar valores novos, solicite Atualizar do CPE e aguarde o próximo Inform.');
+}
 function parameterSearchTerms(path) {
   const low = String(path || '').toLowerCase();
   const terms = [String(path || '')];
@@ -413,6 +465,7 @@ async function loadDeviceParameters(id, acsId, tab) {
   $('deviceTabBody').innerHTML = '<div class="card"><div class="hint">Consultando GenieACS...</div></div>';
   try {
     const d = await api(`/api/acs/devices/${encodeURIComponent(acsId)}/parameters`);
+    renderDeviceOperationalSummary(d);
     if (tab === 'info') {
       const di = d.identity || {};
       $('deviceTabBody').innerHTML = `<div class="grid"><div class="card"><div class="title">Fabricante</div><div class="big-value">${esc(di._Manufacturer || '—')}</div></div><div class="card"><div class="title">Modelo / Product Class</div><div class="big-value">${esc(di._ProductClass || '—')}</div></div><div class="card"><div class="title">Serial</div><div class="big-value mono">${esc(di._SerialNumber || '—')}</div></div><div class="card"><div class="title">OUI</div><div class="big-value mono">${esc(di._OUI || '—')}</div></div></div>${sectionCard('Informações coletadas', d.categories.info)}<div class="card"><div class="kv"><span>Último Inform</span><b class="mono">${esc(d.lastInform || '—')}</b></div><div class="kv"><span>Último boot</span><b class="mono">${esc(d.lastBoot || '—')}</b></div><div class="kv"><span>Parâmetros em cache</span><b>${esc(d.parameterCount)}</b></div></div>`;
@@ -440,7 +493,7 @@ function renderProvisionForm(values, acsId) {
     const item = currentProvisionValues.find(x => x.path === path);
     return item && item.value !== undefined && item.value !== null ? String(item.value) : '';
   };
-  const field = (id, label, val, ph) => `<div><label>${esc(label)}</label><input id="prov_${id}" value="${esc(val)}" placeholder="${esc(ph)}" ${id.endsWith('Pass') ? 'type="password" autocomplete="new-password"' : ''}></div>`;
+  const field = (id, label, val, ph) => `<div><label for="prov_${id}">${esc(label)}</label><input id="prov_${id}" value="${esc(val)}" placeholder="${esc(ph)}" ${id.endsWith('Pass') ? 'type="password" autocomplete="new-password"' : ''}></div>`;
   const fields = [
     field('pppoeUser', 'Usuário PPPoE', getValue('Device.PPP.Interface.1.Username'), 'Usuário de teste criado no MikroTik'),
     field('pppoePass', 'Senha PPPoE', '', 'Senha do usuário PPPoE de teste'),
@@ -466,14 +519,68 @@ function renderProvisionForm(values, acsId) {
   const wanWarning = physicalUp ? '' : `<div class="hint-block" style="border-left:4px solid #c88619;padding-left:10px"><b>Atenção:</b> o cache do ACS informa a WAN como não conectada fisicamente (EWAN: ${esc(wanPort)}; Link 2: ${esc(wanLink)}). Confirme o cabo entre o MikroTik e a porta WAN. A tarefa pode ser enviada pelo canal de gerenciamento, mas o PPPoE não conectará enquanto o link físico estiver inativo.</div>`;
   $('deviceTabBody').innerHTML = `<div class="card">
     <h3 style="margin-top:0">Provisionamento — perfil RESIDENCIAL</h3>
-    <p class="hint">Configure apenas PPPoE de laboratório e Wi-Fi. O plano abaixo também habilita as interfaces Wi-Fi principal de 2,4 GHz e 5 GHz. A tarefa não altera VLAN, LAN nem os parâmetros do ACS.</p>
+    <p class="hint">Selecione a etapa correta. O modo laboratório mantém o equipamento em teste; a ativação do cliente substitui a credencial PPPoE atual pela definitiva e aplica os nomes/senha Wi-Fi informados.</p>
     <div class="card" style="margin:10px 0">${health}</div>
     ${wanWarning}
+    <div style="margin:12px 0">
+      <label for="prov_operationMode">Etapa do provisionamento</label>
+      <select id="prov_operationMode" onchange="updateProvisioningMode()" style="width:100%">
+        <option value="lab">Laboratório / manutenção</option>
+        <option value="customer">Ativação de cliente final</option>
+      </select>
+    </div>
+    <div id="provModeHint" class="hint-block">Modo laboratório: use apenas uma conta PPPoE de teste criada no MikroTik. Não informe credenciais de cliente real.</div>
     <div class="two">${fields.join('')}</div>
-    <div class="actions" style="margin-top:14px"><button class="secondary" onclick="previewProvisioning()">Pré-visualizar alterações</button><button class="ok" onclick="sendProvisioning('${esc(acsId)}')">Enviar configuração RESIDENCIAL</button></div>
+    <div id="customerActivationConfirmWrap" class="hint-block" style="display:none;border-left:4px solid #c88619">
+      <label style="display:flex;align-items:flex-start;gap:8px;color:var(--text);font-size:13px">
+        <input id="confirmCustomerPppoe" type="checkbox" style="width:auto;flex:0 0 auto;margin-top:3px">
+        <span>Confirmo que o usuário PPPoE definitivo já foi criado/validado no MikroTik, que os dados inseridos são os do cliente correto e que autorizo substituir a credencial temporária. Sei que uma credencial errada pode interromper a Internet.</span>
+      </label>
+    </div>
+    <div class="actions" style="margin-top:14px"><button class="secondary" onclick="previewProvisioning()">Pré-visualizar alterações</button><button id="sendProvisioningButton" class="ok" onclick="sendProvisioning('${esc(acsId)}')">Enviar configuração de laboratório</button></div>
     <div id="provisionPreview" class="hint-block" style="display:none;margin-top:12px"></div>
-    <div class="hint-block">O envio cria uma tarefa setParameterValues no GenieACS. Só parâmetros presentes e marcados como graváveis no cache serão enviados. A tarefa aceita pelo ACS não comprova aplicação; confirme o próximo Inform e o estado real do CPE.</div>
+    <div class="hint-block">O envio cria uma tarefa setParameterValues no GenieACS. Só parâmetros presentes e marcados como graváveis no cache serão enviados. A aceitação pelo ACS não comprova aplicação; confirme o próximo Inform e o estado real do CPE. VLAN, LAN e parâmetros do ACS ficam fora deste plano.</div>
   </div>`;
+  updateProvisioningMode();
+}
+
+function updateProvisioningMode() {
+  const mode = $('prov_operationMode')?.value || 'lab';
+  const hint = $('provModeHint');
+  const confirmWrap = $('customerActivationConfirmWrap');
+  const confirm = $('confirmCustomerPppoe');
+  const button = $('sendProvisioningButton');
+  const userInput = $('prov_pppoeUser');
+  const passInput = $('prov_pppoePass');
+  const wifi24 = $('prov_ssid24');
+  const wifi5 = $('prov_ssid5');
+  const wifiPass = $('prov_wifiPass');
+  if (mode === 'customer') {
+    if (hint) {
+      hint.style.borderLeft = '4px solid #c88619';
+      hint.innerHTML = '<b>Ativação de cliente final:</b> substitui o PPPoE atual e aplica os nomes e a senha Wi-Fi informados. Primeiro confira no MikroTik se o usuário definitivo já existe e pertence a este cliente. Não altere VLAN ou parâmetros ACS nesta etapa.';
+    }
+    if (confirmWrap) confirmWrap.style.display = 'block';
+    if (button) button.textContent = 'Ativar cliente / trocar PPPoE';
+    if (userInput) userInput.placeholder = 'Usuário PPPoE definitivo deste cliente';
+    if (passInput) passInput.placeholder = 'Senha PPPoE definitiva do cliente';
+    if (wifi24) wifi24.placeholder = 'SSID residencial 2,4 GHz';
+    if (wifi5) wifi5.placeholder = 'SSID residencial 5 GHz';
+    if (wifiPass) wifiPass.placeholder = 'Senha Wi-Fi definida para o cliente';
+  } else {
+    if (hint) {
+      hint.style.borderLeft = '';
+      hint.innerHTML = 'Modo laboratório: use apenas uma conta PPPoE de teste criada no MikroTik. Não informe credenciais de cliente real.';
+    }
+    if (confirmWrap) confirmWrap.style.display = 'none';
+    if (confirm) confirm.checked = false;
+    if (button) button.textContent = 'Enviar configuração de laboratório';
+    if (userInput) userInput.placeholder = 'Usuário PPPoE de teste do MikroTik';
+    if (passInput) passInput.placeholder = 'Senha PPPoE de teste';
+    if (wifi24) wifi24.placeholder = 'Ex.: RFN_LAB_24';
+    if (wifi5) wifi5.placeholder = 'Ex.: RFN_LAB_5G';
+    if (wifiPass) wifiPass.placeholder = '8 a 63 caracteres; será usada nas duas bandas';
+  }
 }
 
 function buildProvisioningParameterValues() {
@@ -524,14 +631,30 @@ function previewProvisioning() {
     const p = currentProvisionValues.find(x => x.path === path);
     return !p || p.writable !== true;
   });
+  const mode = $('prov_operationMode')?.value || 'lab';
+  const modeLabel = mode === 'customer' ? 'Ativação do cliente final' : 'Laboratório / manutenção';
+  const modeNote = mode === 'customer'
+    ? 'Prévia da ativação final. Confira o usuário PPPoE proposto e confirme que essa conta já existe no MikroTik para o cliente correto. Uma credencial errada pode interromper o serviço.'
+    : 'Prévia de laboratório. Use somente credenciais temporárias de teste.';
   target.style.display = 'block';
-  target.innerHTML = `<h4 style="margin:0 0 8px">Prévia da tarefa — ${parameterValues.length} parâmetros</h4><p class="hint">Nenhuma alteração foi enviada. VLAN, endereço LAN e parâmetros do ACS permanecem fora do plano.</p><div style="overflow:auto"><table><thead><tr><th>Parâmetro</th><th>Atual</th><th>Proposto</th><th>Gravável?</th></tr></thead><tbody>${rows}</tbody></table></div>${noWrite.length ? `<p style="color:#b45309"><b>Envio bloqueado por segurança:</b> ${noWrite.length} parâmetro(s) não aparecem como graváveis no cache atual. Atualize os dados do CPE ou valide os caminhos para este firmware antes de enviar.</p>` : '<p>Todos os caminhos do plano constam como graváveis no cache atual. Revise os valores antes de enviar.</p>'}`;
+  target.innerHTML = `<h4 style="margin:0 0 8px">${esc(modeLabel)} — ${parameterValues.length} parâmetros</h4><p class="hint">Nenhuma alteração foi enviada. ${esc(modeNote)} VLAN, endereço LAN e parâmetros ACS permanecem fora do plano.</p><div style="overflow:auto"><table><thead><tr><th>Parâmetro</th><th>Atual</th><th>Proposto</th><th>Gravável?</th></tr></thead><tbody>${rows}</tbody></table></div>${noWrite.length ? `<p style="color:#b45309"><b>Envio bloqueado por segurança:</b> ${noWrite.length} parâmetro(s) não aparecem como graváveis no cache atual. Atualize os dados do CPE ou valide os caminhos para este firmware antes de enviar.</p>` : '<p>Todos os caminhos do plano constam como graváveis no cache atual. Revise os valores antes de enviar.</p>'}`;
 }
 
 async function sendProvisioning(acsId) {
+  const mode = $('prov_operationMode')?.value || 'lab';
   let parameterValues;
   try { parameterValues = buildProvisioningParameterValues(); }
   catch (e) { showStatus(e.message, false); return; }
+  if (mode === 'customer' && !$('confirmCustomerPppoe')?.checked) {
+    showStatus('Marque a confirmação de ativação somente após validar o PPPoE definitivo no MikroTik.', false);
+    return;
+  }
+  const proposedUser = String(parameterValues.find(([path]) => path === 'Device.PPP.Interface.1.Username')?.[1] ?? '').trim();
+  const currentUser = String(currentProvisionValues.find(x => x.path === 'Device.PPP.Interface.1.Username')?.value ?? '').trim();
+  if (mode === 'customer' && proposedUser && currentUser && proposedUser === currentUser) {
+    const proceedSameUser = window.confirm(`O usuário PPPoE proposto (${proposedUser}) é igual ao que o CPE já informa. Se a intenção é substituir a conta temporária, volte e informe o usuário definitivo. Deseja prosseguir mesmo assim?`);
+    if (!proceedSameUser) return;
+  }
   const unsupported = parameterValues.filter(([path]) => {
     const p = currentProvisionValues.find(x => x.path === path);
     return !p || p.writable !== true;
@@ -548,13 +671,23 @@ async function sendProvisioning(acsId) {
     const proceed = window.confirm('O cache atual informa o link WAN como DOWN. Você pode enviar as configurações pelo gerenciamento, mas o PPPoE não conectará enquanto o cabo/link físico estiver inativo. Deseja enfileirar a tarefa mesmo assim?');
     if (!proceed) return;
   }
+  if (mode === 'customer') {
+    const accepted = window.confirm(
+      `CONFIRMAR ATIVAÇÃO DO CLIENTE\n\nPPPoE atual: ${currentUser || 'não informado'}\nPPPoE proposto: ${proposedUser || 'não informado'}\n\nA tarefa trocará as credenciais PPPoE e aplicará os valores Wi-Fi informados. Confirme que o usuário/senha já estão cadastrados no MikroTik e pertencem ao cliente correto. Uma credencial inválida pode interromper a Internet. VLAN, LAN e parâmetros ACS não serão alterados.\n\nEnviar agora?`
+    );
+    if (!accepted) return;
+  }
   const resultPreview = $('provisionPreview');
   if (resultPreview) resultPreview.style.display = 'none';
   try {
     const result = await api(`/api/acs/devices/${encodeURIComponent(acsId)}/provision`, {
-      method: 'POST', body: JSON.stringify({ parameterValues })
+      method: 'POST', body: JSON.stringify({ parameterValues, operationMode: mode })
     });
-    showStatus(`Tarefa enviada ao GenieACS (${result.count || parameterValues.length} parâmetros). A aplicação ainda precisa ser confirmada pelo próximo Inform.`);
+    if (mode === 'customer') {
+      showStatus(`Ativação enviada ao GenieACS (${result.count || parameterValues.length} parâmetros). Confirme pelo próximo Inform e pelo estado PPPoE.`);
+    } else {
+      showStatus(`Tarefa de laboratório enviada ao GenieACS (${result.count || parameterValues.length} parâmetros). Confirme pelo próximo Inform.`);
+    }
   } catch (e) { showStatus(e.message, false); }
 }
 async function assignProfile(id) { try { await api(`/api/equipment/${id}`, { method: 'PATCH', body: JSON.stringify({ profile_id: $('eProfile').value || null }) }); closeModal(); showStatus('Perfil associado.'); await loadAll(); } catch (e) { showStatus(e.message, false); } }
