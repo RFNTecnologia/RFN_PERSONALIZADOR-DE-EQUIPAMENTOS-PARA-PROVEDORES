@@ -588,21 +588,302 @@ app.post("/api/acs/devices/:deviceId/task", async (req, res) => {
   }
 });
 
+const MR60X_PROVISIONING_ALLOWLIST = new Set([
+  "Device.PPP.Interface.1.Enable",
+  "Device.PPP.Interface.1.ConnectionTrigger",
+  "Device.PPP.Interface.1.Username",
+  "Device.PPP.Interface.1.Password",
+  "Device.PPP.Interface.1.MaxMRUSize",
+  "Device.WiFi.Radio.1.Enable",
+  "Device.WiFi.SSID.1.Enable",
+  "Device.WiFi.AccessPoint.1.Enable",
+  "Device.WiFi.SSID.1.SSID",
+  "Device.WiFi.AccessPoint.1.Security.PreSharedKey",
+  "Device.WiFi.Radio.2.Enable",
+  "Device.WiFi.SSID.3.Enable",
+  "Device.WiFi.AccessPoint.3.Enable",
+  "Device.WiFi.SSID.3.SSID",
+  "Device.WiFi.AccessPoint.3.Security.PreSharedKey",
+]);
+
+const MR60X_SENSITIVE_PATHS = new Set([
+  "Device.PPP.Interface.1.Password",
+  "Device.WiFi.AccessPoint.1.Security.PreSharedKey",
+  "Device.WiFi.AccessPoint.3.Security.PreSharedKey",
+]);
+
+function provisioningSnapshot(device) {
+  const values = flattenDevice(device);
+  const byPath = new Map(values.map((entry) => [entry.path, entry]));
+  const value = (...paths) => {
+    for (const path of paths) {
+      const entry = byPath.get(path);
+      if (entry && entry.value !== undefined && entry.value !== null) return entry.value;
+    }
+    return null;
+  };
+  let wanIp = value("Device.IP.Interface.5.IPv4Address.1.IPAddress");
+  if (!wanIp || String(wanIp) === "0.0.0.0") wanIp = null;
+  return {
+    lastInform: device?._lastInform || null,
+    wanPortStatus: value("Device.Ethernet.Interface.3.Status"),
+    wanLinkStatus: value("Device.Ethernet.Link.2.Status"),
+    pppoeStatus: value("Device.PPP.Interface.1.ConnectionStatus"),
+    pppoeUsername: value("Device.PPP.Interface.1.Username"),
+    wanIp,
+    ssid24: value("Device.WiFi.SSID.1.SSID"),
+    ssid5: value("Device.WiFi.SSID.3.SSID"),
+  };
+}
+
+function normalizeProvisionValue(value) {
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "number") return String(value);
+  if (value === null || value === undefined) return "";
+  return String(value).trim();
+}
+
+function safeTaskMetadata(taskData) {
+  const task = Array.isArray(taskData) ? taskData[0] : taskData;
+  if (!task || typeof task !== "object") return { responseType: task === null ? "null" : typeof task };
+  const metadata = {};
+  for (const key of ["_id", "id", "name", "timestamp", "status"]) {
+    const value = task[key];
+    if (["string", "number", "boolean"].includes(typeof value)) metadata[key] = value;
+  }
+  return metadata;
+}
+
+async function reconcileProvisioningActivations(deviceId, device) {
+  const pending = await pool.query(
+    `select id, status, requested_values, created_at, submitted_at, equipment_id, profile_id
+       from provisioning_activations
+      where device_id=$1 and status in ('queued','partial','needs_review')
+      order by id desc limit 50`,
+    [deviceId]
+  );
+  const byPath = new Map(flattenDevice(device).map((entry) => [entry.path, entry]));
+  const snapshot = provisioningSnapshot(device);
+  const informMs = Date.parse(snapshot.lastInform || "");
+  const nowMs = Date.now();
+
+  for (const operation of pending.rows) {
+    const referenceMs = new Date(operation.submitted_at || operation.created_at).getTime();
+    if (!Number.isFinite(informMs) || informMs <= referenceMs) {
+      if (nowMs - referenceMs > 10 * 60 * 1000 && operation.status !== "needs_review") {
+        await pool.query(
+          `update provisioning_activations
+              set status='needs_review', status_note=$1, updated_at=now()
+            where id=$2`,
+          ["Nenhum Inform posterior à solicitação foi observado em 10 minutos; verifique a tarefa e atualize o CPE.", operation.id]
+        );
+      }
+      continue;
+    }
+
+    const expected = operation.requested_values && typeof operation.requested_values === "object"
+      ? operation.requested_values : {};
+    const mismatches = [];
+    for (const [parameterPath, expectedValue] of Object.entries(expected)) {
+      const live = byPath.get(parameterPath);
+      if (!live || normalizeProvisionValue(live.value) !== normalizeProvisionValue(expectedValue)) {
+        mismatches.push(parameterPath);
+      }
+    }
+    const confirmed = mismatches.length === 0 && Object.keys(expected).length > 0;
+    const status = confirmed ? "confirmed" : "partial";
+    const note = confirmed
+      ? (String(snapshot.pppoeStatus || "").toLowerCase() === "connected"
+          ? "Parâmetros não secretos conferidos no cache após Inform; sessão PPPoE Connected. As senhas não são lidas de volta pelo histórico."
+          : `Parâmetros não secretos conferidos no cache após Inform; estado PPPoE atual: ${snapshot.pppoeStatus || "não informado"}.`)
+      : `O CPE enviou Inform após a tarefa, mas ${mismatches.length} valor(es) esperado(s) ainda divergem do cache.`;
+    await pool.query(
+      `update provisioning_activations
+          set status=$1, status_note=$2, observed_summary=$3::jsonb,
+              last_observed_at=now(),
+              confirmed_at=case when $1='confirmed' then coalesce(confirmed_at, now()) else null end,
+              updated_at=now()
+        where id=$4`,
+      [status, note, JSON.stringify({ ...snapshot, mismatchedPaths: mismatches }), operation.id]
+    );
+    if (confirmed && operation.equipment_id && operation.profile_id) {
+      await pool.query("update equipment set profile_id=$1 where id=$2", [operation.profile_id, operation.equipment_id]);
+    }
+  }
+}
+
 app.post("/api/acs/devices/:deviceId/provision", async (req, res) => {
+  let operationId = null;
   try {
+    const deviceId = String(req.params.deviceId || "");
     const parameterValues = Array.isArray(req.body?.parameterValues) ? req.body.parameterValues : [];
+    const operationMode = req.body?.operationMode === "customer" ? "customer" : "lab";
     if (!parameterValues.length) return res.status(400).json({ error: "parameterValues é obrigatório" });
-    const valid = parameterValues.every(x => Array.isArray(x) && x.length >= 2 && typeof x[0] === 'string' && x[0].trim() && x[1] !== undefined);
-    if (!valid) return res.status(400).json({ error: "Cada parâmetro deve ser [caminho, valor]" });
-    const task = { name: "setParameterValues", parameterValues: parameterValues.map(([path, value]) => [path.trim(), value]) };
-    const result = await nbiFetch(`/devices/${encodeURIComponent(req.params.deviceId)}/tasks?connection_request`, {
-      method: "POST", body: JSON.stringify(task)
-    });
-    res.json({ ok: true, count: parameterValues.length, result });
+    if (operationMode === "customer" && req.body?.confirmCustomerPppoe !== true) {
+      return res.status(400).json({ error: "Confirmação explícita obrigatória para ativação de cliente." });
+    }
+    const validPairs = parameterValues.every((item) =>
+      Array.isArray(item) && item.length >= 2 && typeof item[0] === "string" && item[0].trim() && item[1] !== undefined
+    );
+    if (!validPairs) return res.status(400).json({ error: "Cada parâmetro deve ser [caminho, valor]" });
+
+    const seenPaths = new Set();
+    for (const [parameterPath] of parameterValues) {
+      const pathValue = parameterPath.trim();
+      if (!MR60X_PROVISIONING_ALLOWLIST.has(pathValue)) {
+        return res.status(400).json({ error: `Parâmetro fora da lista permitida para provisionamento MR60X: ${pathValue}` });
+      }
+      if (seenPaths.has(pathValue)) return res.status(400).json({ error: `Parâmetro duplicado no plano: ${pathValue}` });
+      seenPaths.add(pathValue);
+    }
+    if (seenPaths.size !== MR60X_PROVISIONING_ALLOWLIST.size || [...MR60X_PROVISIONING_ALLOWLIST].some((pathValue) => !seenPaths.has(pathValue))) {
+      return res.status(400).json({ error: "O plano de provisionamento MR60X está incompleto. Gere novamente a prévia no RFN." });
+    }
+
+    const query = encodeURIComponent(JSON.stringify({ _id: deviceId }));
+    const devices = await nbiFetch(`/devices/?query=${query}`);
+    const device = Array.isArray(devices) ? devices[0] : null;
+    if (!device) return res.status(404).json({ error: "CPE não encontrado no GenieACS" });
+    const manufacturer = String(device?._deviceId?._Manufacturer || device?.Device?.DeviceInfo?.Manufacturer?._value || "");
+    const model = String(device?._deviceId?._ProductClass || device?.Device?.DeviceInfo?.ProductClass?._value || device?.Device?.DeviceInfo?.ModelName?._value || "");
+    if (!/mercusys/i.test(manufacturer) || !/mr60x/i.test(model)) {
+      return res.status(409).json({ error: "Este plano de parâmetros é específico ao MERCUSYS MR60X. Não será enviado para outro modelo." });
+    }
+
+    const liveByPath = new Map(flattenDevice(device).map((entry) => [entry.path, entry]));
+    const notWritable = [...seenPaths].filter((pathValue) => liveByPath.get(pathValue)?.writable !== true);
+    if (notWritable.length) {
+      return res.status(409).json({ error: "Envio bloqueado: existem parâmetros ausentes ou não graváveis no cache atual.", parameters: notWritable });
+    }
+    const cleanPairs = parameterValues.map(([parameterPath, value]) => [parameterPath.trim(), value]);
+    const getRequested = (pathValue) => cleanPairs.find(([path]) => path === pathValue)?.[1];
+    const booleanPaths = [
+      "Device.PPP.Interface.1.Enable",
+      "Device.WiFi.Radio.1.Enable",
+      "Device.WiFi.SSID.1.Enable",
+      "Device.WiFi.AccessPoint.1.Enable",
+      "Device.WiFi.Radio.2.Enable",
+      "Device.WiFi.SSID.3.Enable",
+      "Device.WiFi.AccessPoint.3.Enable",
+    ];
+    for (const pathValue of booleanPaths) {
+      if (typeof getRequested(pathValue) !== "boolean") {
+        return res.status(400).json({ error: `Valor booleano obrigatório para ${pathValue}` });
+      }
+    }
+    if (getRequested("Device.PPP.Interface.1.ConnectionTrigger") !== "AlwaysOn") {
+      return res.status(400).json({ error: "ConnectionTrigger deve ser AlwaysOn neste perfil residencial." });
+    }
+    const mru = getRequested("Device.PPP.Interface.1.MaxMRUSize");
+    if (!Number.isInteger(mru) || mru < 576 || mru > 1492) {
+      return res.status(400).json({ error: "MaxMRUSize precisa ser um inteiro entre 576 e 1492." });
+    }
+    for (const pathValue of ["Device.PPP.Interface.1.Username", "Device.PPP.Interface.1.Password", "Device.WiFi.SSID.1.SSID", "Device.WiFi.SSID.3.SSID", "Device.WiFi.AccessPoint.1.Security.PreSharedKey", "Device.WiFi.AccessPoint.3.Security.PreSharedKey"]) {
+      if (typeof getRequested(pathValue) !== "string") {
+        return res.status(400).json({ error: `Valor de texto obrigatório para ${pathValue}` });
+      }
+    }
+    const pppoeUsername = String(getRequested("Device.PPP.Interface.1.Username") || "").trim();
+    const pppoePassword = String(getRequested("Device.PPP.Interface.1.Password") || "");
+    const ssid24 = String(getRequested("Device.WiFi.SSID.1.SSID") || "").trim();
+    const ssid5 = String(getRequested("Device.WiFi.SSID.3.SSID") || "").trim();
+    const wifiPass = String(getRequested("Device.WiFi.AccessPoint.1.Security.PreSharedKey") || "");
+    const wifiPass5 = String(getRequested("Device.WiFi.AccessPoint.3.Security.PreSharedKey") || "");
+    if (!pppoeUsername || pppoeUsername.length > 180 || !pppoePassword || pppoePassword.length > 256) {
+      return res.status(400).json({ error: "Usuário e senha PPPoE são obrigatórios e precisam ter tamanho válido." });
+    }
+    if (!ssid24 || !ssid5 || ssid24.length > 32 || ssid5.length > 32) {
+      return res.status(400).json({ error: "Os dois SSIDs são obrigatórios e devem ter até 32 caracteres." });
+    }
+    if (wifiPass.length < 8 || wifiPass.length > 63 || wifiPass5.length < 8 || wifiPass5.length > 63) {
+      return res.status(400).json({ error: "Cada senha Wi-Fi precisa ter entre 8 e 63 caracteres." });
+    }
+
+    const safeExpectedValues = Object.fromEntries(cleanPairs.filter(([pathValue]) => !MR60X_SENSITIVE_PATHS.has(pathValue)));
+    const sensitivePaths = cleanPairs.filter(([pathValue]) => MR60X_SENSITIVE_PATHS.has(pathValue)).map(([pathValue]) => pathValue);
+    const equipmentRow = await pool.query("select id, customer_id, profile_id from equipment where acs_device_id=$1 limit 1", [deviceId]);
+    const residentialProfile = await pool.query("select id, name from equipment_profiles where name='RESIDENCIAL' limit 1");
+    const created = await pool.query(
+      `insert into provisioning_activations
+        (device_id, equipment_id, customer_id, profile_id, profile_name, manufacturer, model, operation_mode, pppoe_username,
+         wifi_ssid_24, wifi_ssid_5g, parameter_count, requested_values, sensitive_paths,
+         status, requested_by, requested_by_email, observed_summary)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,'submitting',$15,$16,$17::jsonb)
+       returning id, created_at`,
+      [deviceId, equipmentRow.rows[0]?.id || null, equipmentRow.rows[0]?.customer_id || null,
+        residentialProfile.rows[0]?.id || equipmentRow.rows[0]?.profile_id || null,
+        residentialProfile.rows[0]?.name || "RESIDENCIAL", manufacturer || null, model || null, operationMode,
+        pppoeUsername, ssid24, ssid5, cleanPairs.length, JSON.stringify(safeExpectedValues), sensitivePaths,
+        req.authUser?.id || null, req.authUser?.email || null, JSON.stringify(provisioningSnapshot(device))]
+    );
+    operationId = created.rows[0].id;
+
+    const task = { name: "setParameterValues", parameterValues: cleanPairs };
+    try {
+      const result = await nbiRequest(`/devices/${encodeURIComponent(deviceId)}/tasks?connection_request`, {
+        method: "POST", body: JSON.stringify(task)
+      });
+      const taskData = result.data;
+      const taskObject = Array.isArray(taskData) ? taskData[0] : taskData;
+      const taskId = taskObject && typeof taskObject === "object" ? (taskObject._id || taskObject.id || null) : null;
+      await pool.query(
+        `update provisioning_activations
+            set status='queued', task_id=$1, task_metadata=$2::jsonb,
+                submitted_at=now(), status_note=$3, updated_at=now()
+          where id=$4`,
+        [taskId ? String(taskId) : null, JSON.stringify(safeTaskMetadata(taskData)),
+          "GenieACS aceitou a tarefa. A aplicação será confirmada somente após um Inform posterior e conferência dos valores não secretos.", operationId]
+      );
+      res.status(result.status === 202 ? 202 : 200).json({
+        ok: true, count: cleanPairs.length, operationId, status: "queued", taskId,
+        taskAccepted: true,
+        message: "Tarefa aceita pelo GenieACS; aguarde o próximo Inform para confirmar os valores no CPE."
+      });
+    } catch (error) {
+      await pool.query(
+        `update provisioning_activations set status='failed', status_note=$1, updated_at=now() where id=$2`,
+        [String(error?.message || "Falha ao enviar tarefa ao GenieACS").slice(0, 300), operationId]
+      );
+      throw error;
+    }
   } catch (e) {
-    res.status(502).json({ ok: false, error: "Falha ao enviar provisionamento ao CPE", details: e.details || e.message });
+    if (operationId !== null) {
+      // The operation table stores only non-secret requested values; never save passwords or the raw task payload.
+      try {
+        await pool.query(
+          `update provisioning_activations set status='failed', status_note=$1, updated_at=now() where id=$2 and status='submitting'`,
+          [String(e?.message || "Falha ao enviar provisionamento").slice(0, 300), operationId]
+        );
+      } catch { /* Preserve the original provisioning error. */ }
+    }
+    res.status(e.status === 400 ? 400 : 502).json({ ok: false, error: "Falha ao enviar provisionamento ao CPE", details: e.details || e.message });
   }
 });
+
+app.get("/api/acs/devices/:deviceId/activations", async (req, res) => {
+  try {
+    const deviceId = String(req.params.deviceId || "");
+    const query = encodeURIComponent(JSON.stringify({ _id: deviceId }));
+    const devices = await nbiFetch(`/devices/?query=${query}`);
+    const device = Array.isArray(devices) ? devices[0] : null;
+    if (!device) return res.status(404).json({ error: "CPE não encontrado no GenieACS" });
+    await reconcileProvisioningActivations(deviceId, device);
+    const history = await pool.query(
+      `select a.id, a.device_id, a.equipment_id, a.customer_id, c.name as customer_name,
+              a.profile_id, a.profile_name, a.manufacturer, a.model, a.operation_mode, a.pppoe_username,
+              a.wifi_ssid_24, a.wifi_ssid_5g, a.parameter_count, a.sensitive_paths, a.task_id, a.task_metadata,
+              a.status, a.status_note, a.observed_summary, a.requested_by_email, a.created_at, a.submitted_at, a.updated_at,
+              a.last_observed_at, a.confirmed_at
+         from provisioning_activations a left join customers c on c.id=a.customer_id
+        where a.device_id=$1 order by a.id desc limit 30`,
+      [deviceId]
+    );
+    res.json({ ok: true, current: provisioningSnapshot(device), operations: history.rows });
+  } catch (e) {
+    res.status(502).json({ error: "Não foi possível carregar o histórico de ativações", details: e.details || e.message });
+  }
+});
+
 
 app.post("/api/acs/devices/:deviceId/apply-profile", async (req, res) => {
   try {

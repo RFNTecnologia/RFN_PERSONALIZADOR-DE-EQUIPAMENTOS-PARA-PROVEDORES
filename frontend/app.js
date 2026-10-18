@@ -539,9 +539,11 @@ function renderProvisionForm(values, acsId) {
     </div>
     <div class="actions" style="margin-top:14px"><button class="secondary" onclick="previewProvisioning()">Pré-visualizar alterações</button><button id="sendProvisioningButton" class="ok" onclick="sendProvisioning('${esc(acsId)}')">Enviar configuração de laboratório</button></div>
     <div id="provisionPreview" class="hint-block" style="display:none;margin-top:12px"></div>
-    <div class="hint-block">O envio cria uma tarefa setParameterValues no GenieACS. Só parâmetros presentes e marcados como graváveis no cache serão enviados. A aceitação pelo ACS não comprova aplicação; confirme o próximo Inform e o estado real do CPE. VLAN, LAN e parâmetros do ACS ficam fora deste plano.</div>
+    <div class="hint-block">O RFN mantém um histórico operacional sem gravar as senhas PPPoE/Wi-Fi. “Confirmado” significa que os valores não secretos esperados foram encontrados no cache após um Inform posterior; o estado da sessão PPPoE aparece separadamente.</div>
+    <div id="provisioningHistory" style="margin-top:12px"><div class="card"><div class="hint">Carregando histórico de ativações...</div></div></div>
   </div>`;
   updateProvisioningMode();
+  loadProvisioningHistory(acsId);
 }
 
 function updateProvisioningMode() {
@@ -681,14 +683,51 @@ async function sendProvisioning(acsId) {
   if (resultPreview) resultPreview.style.display = 'none';
   try {
     const result = await api(`/api/acs/devices/${encodeURIComponent(acsId)}/provision`, {
-      method: 'POST', body: JSON.stringify({ parameterValues, operationMode: mode })
+      method: 'POST', body: JSON.stringify({
+        parameterValues,
+        operationMode: mode,
+        confirmCustomerPppoe: mode === 'customer' && $('confirmCustomerPppoe')?.checked === true
+      })
     });
-    if (mode === 'customer') {
-      showStatus(`Ativação enviada ao GenieACS (${result.count || parameterValues.length} parâmetros). Confirme pelo próximo Inform e pelo estado PPPoE.`);
-    } else {
-      showStatus(`Tarefa de laboratório enviada ao GenieACS (${result.count || parameterValues.length} parâmetros). Confirme pelo próximo Inform.`);
-    }
+    const operationNumber = result.operationId ? ` Registro #${result.operationId}.` : '';
+    showStatus(`${mode === 'customer' ? 'Ativação' : 'Tarefa de laboratório'} aceita pelo GenieACS; aguardando confirmação pelo CPE.${operationNumber}`);
+    await loadProvisioningHistory(acsId);
   } catch (e) { showStatus(e.message, false); }
+}
+
+const activationStatusLabel = status => ({
+  submitting: 'Enviando', queued: 'Aguardando Inform', confirmed: 'Configuração confirmada',
+  partial: 'Valores divergentes', needs_review: 'Revisar tarefa', failed: 'Falha no envio'
+}[String(status || '')] || String(status || 'desconhecido'));
+
+async function loadProvisioningHistory(acsId) {
+  const host = $('provisioningHistory');
+  if (!host || !acsId) return;
+  host.innerHTML = '<div class="card"><div class="hint">Consultando histórico...</div></div>';
+  try {
+    const data = await api(`/api/acs/devices/${encodeURIComponent(acsId)}/activations`);
+    const current = data.current || {};
+    const ops = Array.isArray(data.operations) ? data.operations : [];
+    const ppp = String(current.pppoeStatus || 'Não informado');
+    const pppConnected = ppp.toLowerCase() === 'connected';
+    const summaryCard = (title, main, detail, badgeClass = 'unknown') => `<div class="card" style="padding:12px"><div class="title">${esc(title)}</div><div class="big-value" style="font-size:15px;margin:6px 0;overflow-wrap:anywhere">${esc(main)}</div><span class="badge ${badgeClass}">${esc(detail)}</span></div>`;
+    const currentSummary = `<div class="card" style="padding:12px;margin-bottom:10px"><div class="title">Estado atual observado pelo GenieACS</div><div class="grid" style="margin-top:8px">${summaryCard('PPPoE', ppp, pppConnected ? 'Autenticada' : 'Não conectada/confirmada', pppConnected ? 'online' : 'unknown')}${summaryCard('Usuário', current.pppoeUsername || '—', 'Reportado pelo CPE', current.pppoeUsername ? 'online' : 'unknown')}${summaryCard('IP WAN', current.wanIp || 'Sem IP atribuído', 'Reportado pelo CPE', current.wanIp ? 'online' : 'unknown')}${summaryCard('Inform', current.lastInform || '—', 'Último contato do CPE', current.lastInform ? 'online' : 'unknown')}</div></div>`;
+    const rows = ops.map(op => {
+      const status = String(op.status || 'unknown');
+      const badge = status === 'confirmed' ? 'online' : status === 'failed' || status === 'partial' || status === 'needs_review' ? 'unknown' : 'unknown';
+      const summary = op.observed_summary && typeof op.observed_summary === 'object' ? op.observed_summary : {};
+      const observed = [summary.pppoeStatus ? `PPPoE: ${summary.pppoeStatus}` : '', summary.wanIp ? `IP: ${summary.wanIp}` : '', summary.lastInform ? `Inform: ${summary.lastInform}` : ''].filter(Boolean).join(' · ') || 'Aguardando leitura do CPE';
+      const mode = op.operation_mode === 'customer' ? 'Cliente final' : 'Laboratório';
+      const profileLabel = op.profile_name || 'RESIDENCIAL';
+      const customerLabel = op.customer_name || (op.customer_id ? `Cliente #${op.customer_id}` : 'Cliente não associado');
+      const created = op.created_at ? new Date(op.created_at).toLocaleString('pt-BR') : '—';
+      const requestedBy = op.requested_by_email ? `<div class="hint">Operador: ${esc(op.requested_by_email)}</div>` : '';
+      return `<tr><td>#${esc(op.id)}</td><td>${esc(mode)}<div class="hint">Perfil: ${esc(profileLabel)}</div><div class="hint">${esc(customerLabel)}</div><div class="hint mono">PPPoE: ${esc(op.pppoe_username || '—')}</div></td><td><span class="badge ${badge}">${esc(activationStatusLabel(status))}</span><div class="hint">${esc(op.status_note || '')}</div></td><td>${esc(observed)}</td><td>${esc(created)}${requestedBy}</td></tr>`;
+    }).join('') || '<tr><td colspan="5" class="empty">Nenhuma ativação registrada para este equipamento.</td></tr>';
+    host.innerHTML = `${currentSummary}<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h3 style="margin:0">Histórico de provisionamento</h3><button type="button" class="secondary" onclick="loadProvisioningHistory('${esc(acsId)}')">Atualizar histórico</button></div><p class="hint">Senhas não são salvas neste histórico. Confirmação de configuração e conectividade PPPoE são estados separados.</p><div class="table-wrap"><table><thead><tr><th>Registro</th><th>Operação / PPPoE</th><th>Resultado</th><th>Estado observado</th><th>Data</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  } catch (e) {
+    host.innerHTML = `<div class="card"><h3>Histórico de provisionamento</h3><p class="hint">${esc(e.message || 'Não foi possível consultar o histórico.')}</p><button class="secondary" onclick="loadProvisioningHistory('${esc(acsId)}')">Tentar novamente</button></div>`;
+  }
 }
 async function assignProfile(id) { try { await api(`/api/equipment/${id}`, { method: 'PATCH', body: JSON.stringify({ profile_id: $('eProfile').value || null }) }); closeModal(); showStatus('Perfil associado.'); await loadAll(); } catch (e) { showStatus(e.message, false); } }
 async function applyProfile(acsId) { try { const e = equipment.find(x => x.acs_device_id === acsId); if (!e?.profile_id) throw new Error('Associe um perfil antes de aplicar.'); await api(`/api/acs/devices/${encodeURIComponent(acsId)}/apply-profile`, { method: 'POST', body: JSON.stringify({ profile_id: e.profile_id }) }); showStatus('Perfil enviado ao GenieACS/CPE.'); } catch (e) { showStatus(e.message, false); } }
