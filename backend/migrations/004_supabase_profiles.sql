@@ -1,0 +1,3 @@
+-- This migration is applied by Supabase directly in this project.
+-- Kept here as documentation for the app bundle; do not re-run blindly.
+-- See Supabase migration create_profiles_and_secure_auth.

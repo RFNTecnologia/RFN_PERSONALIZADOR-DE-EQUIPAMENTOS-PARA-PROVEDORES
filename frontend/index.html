@@ -502,7 +502,7 @@
     <div class="toolbar">
       <div>
         <h1 style="margin:0">Central de Equipamentos</h1>
-        <div class="sub">V12 — Laboratório MR60X, cadastro, perfis e provisionamento via GenieACS</div>
+        <div class="sub">V12.3 — Provisionamento RESIDENCIAL MR60X via GenieACS</div>
       </div>
       <div class="actions"><button onclick="syncACS()">Sincronizar ACS</button><button class="secondary"
           onclick="openEquipmentModal()">+ Equipamento</button><button class="secondary" onclick="openProfileModal()">+
@@ -643,15 +643,17 @@
   <div id="loginOverlay" class="login-overlay" aria-modal="true" role="dialog" aria-labelledby="loginTitle">
     <form id="loginForm" class="login-box">
       <h2 id="loginTitle">Acesso administrativo</h2>
-      <label for="loginUsername">Usuário</label>
-      <input id="loginUsername" name="username" autocomplete="username" required>
+      <label for="loginUsername">E-mail</label>
+      <input id="loginUsername" name="email" type="email" autocomplete="username" required>
       <label for="loginPassword">Senha</label>
       <input id="loginPassword" name="password" type="password" autocomplete="current-password" required>
       <p id="loginError" class="login-error" aria-live="polite"></p>
       <button type="submit">Entrar</button>
+      <p class="hint" style="margin-bottom:0">A conta deve ser criada no Supabase Auth e receber o papel admin no perfil para acessar o painel.</p>
     </form>
   </div>
-  <script src="/app.js?v=15" defer></script>
+  <script>window.RFN_SUPABASE_URL = "https://fhlwmpeakyxrvnzwyiwv.supabase.co"; window.RFN_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_ehrwtRtHihoUDaJA5iqfhw_CJJ-UodJ";</script>
+  <script src="/app.js?v=16" defer></script>
 </body>
 
 </html>

@@ -1,3 +1,9 @@
+# V12.3 — atualização
+
+Veja `V12.3_CHANGELOG.md` para o fluxo de provisionamento RESIDENCIAL.
+
+---
+
 # V12 — Laboratório MR60X / Reset Recovery
 
 - Removida a lógica de recuperação baseada em `Device.User.1/2`.

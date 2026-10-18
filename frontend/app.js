@@ -18,6 +18,7 @@ function showPage(name, btn) {
   if (name === 'acs') loadACS();
 }
 async function api(url, opt = {}) {
+  if (authSession?.access_token && !url.startsWith('/api/auth/')) { await ensureFreshSession(); await syncAuthCookie(authSession); }
   const request = () => fetch(url, {
     ...opt,
     credentials: 'same-origin',
@@ -26,6 +27,7 @@ async function api(url, opt = {}) {
   let r = await request();
   if (r.status === 401 && !url.startsWith('/api/auth/')) {
     await requestLogin();
+    if (authSession?.access_token) await syncAuthCookie(authSession);
     r = await request();
   }
   const d = await r.json().catch(() => ({}));
@@ -33,9 +35,51 @@ async function api(url, opt = {}) {
   return d;
 }
 
+let authSession = null;
+try { authSession = JSON.parse(localStorage.getItem('rfn_supabase_session') || 'null'); } catch { authSession = null; }
+
+async function ensureFreshSession() {
+  if (!authSession?.refresh_token) return;
+  const expiresAt = Number(authSession.expires_at || 0);
+  if (expiresAt && expiresAt > Math.floor(Date.now() / 1000) + 60) return;
+  const data = await supabaseAuth('token?grant_type=refresh_token', { refresh_token: authSession.refresh_token });
+  authSession = { ...data, expires_at: Math.floor(Date.now() / 1000) + Number(data.expires_in || 3600) };
+  localStorage.setItem('rfn_supabase_session', JSON.stringify(authSession));
+  await syncAuthCookie(authSession);
+}
+
+async function syncAuthCookie(session) {
+  const response = await fetch('/api/auth/session', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ access_token: session?.access_token || '' })
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'Não foi possível validar a sessão.');
+  }
+}
+
+async function supabaseAuth(path, body) {
+  const response = await fetch(`${window.RFN_SUPABASE_URL}/auth/v1/${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', apikey: window.RFN_SUPABASE_PUBLISHABLE_KEY },
+    body: JSON.stringify(body)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.msg || data.message || data.error_description || data.error || 'Falha na autenticação.');
+  return data;
+}
+
 async function logout() {
-  await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
-  window.location.reload();
+  try {
+    await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+    if (authSession?.access_token) {
+      await fetch(`${window.RFN_SUPABASE_URL}/auth/v1/logout`, {
+        method: 'POST', headers: { apikey: window.RFN_SUPABASE_PUBLISHABLE_KEY, Authorization: `Bearer ${authSession.access_token}` }
+      });
+    }
+  } finally { localStorage.removeItem('rfn_supabase_session'); authSession = null; window.location.reload(); }
 }
 let loginPromise = null;
 let resolveLogin = null;
@@ -54,24 +98,24 @@ $('loginForm').addEventListener('submit', async event => {
   event.preventDefault();
   $('loginError').textContent = '';
   try {
-    const response = await fetch('/api/auth/login', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: $('loginUsername').value, password: $('loginPassword').value })
+    const data = await supabaseAuth('token?grant_type=password', {
+      email: $('loginUsername').value.trim(), password: $('loginPassword').value
     });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || 'Não foi possível entrar.');
+    authSession = { ...data, expires_at: Math.floor(Date.now() / 1000) + Number(data.expires_in || 3600) };
+    localStorage.setItem('rfn_supabase_session', JSON.stringify(authSession));
+    await syncAuthCookie(authSession);
     $('loginPassword').value = '';
     $('loginOverlay').classList.remove('open');
     const resolve = resolveLogin;
     loginPromise = null;
     resolveLogin = null;
     resolve?.(true);
+    window.location.reload();
   } catch (error) {
     $('loginError').textContent = error.message;
   }
 });
+
 async function loadAll() {
   try {
     const [d, e, p, s] = await Promise.all([api('/api/dashboard'), api('/api/equipment'), api('/api/profiles'), api('/api/provider-settings')]);
@@ -175,8 +219,8 @@ async function saveProfile(id) { try { let config; try { config = JSON.parse($('
 function equipmentActions(id, acsId) {
   const e = equipment.find(x => String(x.id) === String(id)); if (!e) { showStatus('Equipamento não encontrado na lista.', false); return; }
   const options = profiles.map(p => `<option value="${p.id}" ${String(p.id) === String(e.profile_id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
-  const serviceBlocked = e.service_status === 'blocked'; const serviceBadge = serviceBlocked ? '<span class="badge" style="background:#7f1d1d;color:#fff">Internet BLOQUEADA</span>' : '<span class="badge online">Internet LIBERADA</span>'; const identity = `<div class="device-head"><div><h2 style="margin:0">${esc(e.manufacturer)} ${esc(e.model)}</h2><div class="hint">Serial <span class="mono">${esc(e.serial_number)}</span></div></div><div class="actions"><span class="badge ${e.status === 'online' ? 'online' : 'unknown'}">${esc(e.status)}</span>${serviceBadge}</div></div>`;
-  openModal(`${identity}<p class="hint">ACS ID: <span class="mono">${esc(acsId || 'não vinculado')}</span></p><div class="device-tabs"><button class="device-tab active" onclick="showDeviceTab('info',this,${id},'${esc(acsId || '')}')">Informações</button><button class="device-tab" onclick="showDeviceTab('params',this,${id},'${esc(acsId || '')}')">Parâmetros</button><button class="device-tab" onclick="showDeviceTab('wifi',this,${id},'${esc(acsId || '')}')">Wi-Fi</button><button class="device-tab" onclick="showDeviceTab('wan',this,${id},'${esc(acsId || '')}')">WAN</button><button class="device-tab" onclick="showDeviceTab('tr069',this,${id},'${esc(acsId || '')}')">TR-069</button><button class="device-tab" onclick="showDeviceTab('provision',this,${id},'${esc(acsId || '')}')">Provisionamento</button><button class="device-tab" onclick="showDeviceTab('lab',this,${id},'${esc(acsId || '')}')">Laboratório MR60X</button></div><div id="deviceTabBody"><div class="card"><div class="hint">Carregando dados do equipamento...</div></div></div><div class="device-actions"><div><label>Perfil</label><select id="eProfile"><option value="">Sem perfil</option>${options}</select></div><div class="actions"><button onclick="assignProfile(${id})">Associar perfil</button>${acsId ? `<button class="ok" onclick="applyProfile('${esc(acsId)}')">Aplicar perfil</button><button class="secondary" onclick="refreshDevice('${esc(acsId)}')">Atualizar do CPE</button><button class="secondary" onclick="setServiceBlock('${esc(acsId)}', true)">🔒 Bloquear Internet</button><button class="ok" onclick="setServiceBlock('${esc(acsId)}', false)">🔓 Desbloquear Internet</button>` : ''}</div></div>`);
+  const identity = `<div class="device-head"><div><h2 style="margin:0">${esc(e.manufacturer)} ${esc(e.model)}</h2><div class="hint">Serial <span class="mono">${esc(e.serial_number)}</span></div></div><span class="badge ${e.status === 'online' ? 'online' : 'unknown'}">${esc(e.status)}</span></div>`;
+  openModal(`${identity}<p class="hint">ACS ID: <span class="mono">${esc(acsId || 'não vinculado')}</span></p><div class="device-tabs"><button class="device-tab active" onclick="showDeviceTab('info',this,${id},'${esc(acsId || '')}')">Informações</button><button class="device-tab" onclick="showDeviceTab('params',this,${id},'${esc(acsId || '')}')">Parâmetros</button><button class="device-tab" onclick="showDeviceTab('wifi',this,${id},'${esc(acsId || '')}')">Wi-Fi</button><button class="device-tab" onclick="showDeviceTab('wan',this,${id},'${esc(acsId || '')}')">WAN</button><button class="device-tab" onclick="showDeviceTab('tr069',this,${id},'${esc(acsId || '')}')">TR-069</button><button class="device-tab" onclick="showDeviceTab('provision',this,${id},'${esc(acsId || '')}')">Provisionamento</button><button class="device-tab" onclick="showDeviceTab('lab',this,${id},'${esc(acsId || '')}')">Laboratório MR60X</button></div><div id="deviceTabBody"><div class="card"><div class="hint">Carregando dados do equipamento...</div></div></div><div class="device-actions"><div><label>Perfil</label><select id="eProfile"><option value="">Sem perfil</option>${options}</select></div><div class="actions"><button onclick="assignProfile(${id})">Associar perfil</button>${acsId ? `<button class="ok" onclick="applyProfile('${esc(acsId)}')">Aplicar perfil</button><button class="secondary" onclick="refreshDevice('${esc(acsId)}')">Atualizar do CPE</button>` : ''}</div></div>`);
   if (acsId) {
     loadDeviceParameters(id, acsId, 'info');
   } else showDeviceEmpty('Este equipamento não está vinculado a um dispositivo do GenieACS.');
@@ -309,98 +353,68 @@ function findParameterPath(values, exactPaths, needles = []) {
   return '';
 }
 function renderProvisionForm(values, acsId) {
-  const pppoeUser = findParameterPath(values, ['Device.PPP.Interface.1.Username'], ['pppoe.username', 'pppoe.user']);
-  const pppoePass = findParameterPath(values, ['Device.PPP.Interface.1.Password'], ['pppoe.password', 'pppoe.pass']);
-  const vlan = findParameterPath(values, ['Device.Ethernet.VLANTermination.1.VLANID'], ['vlanid', 'vlan']);
-  const mtu = findParameterPath(values, ['Device.PPP.Interface.1.MaxMRUSize', 'Device.IP.Interface.1.MaxMTUSize'], ['mtu']);
-  const dns = findParameterPath(values, ['Device.PPP.Interface.1.IPCP.DNSServers'], ['dns', 'DNSServer']);
-  const ssid = findParameterPath(values, ['Device.WiFi.SSID.1.SSID'], ['ssid']);
-  const wifiPass = findParameterPath(values, ['Device.WiFi.AccessPoint.1.Security.PreSharedKey'], ['pre-sharedkey', 'wifikey', 'wirelesskey']);
+  const getValue = (path) => {
+    const item = (values || []).find(x => x.path === path);
+    return item && item.value !== undefined && item.value !== null ? String(item.value) : '';
+  };
   const fields = [
-    ['pppoeUserPath', 'Caminho PPPoE — usuário', pppoeUser, 'Ex.: ...Username'],
-    ['pppoeUser', 'Usuário PPPoE', '', 'Digite o usuário do cliente'],
-    ['pppoePassPath', 'Caminho PPPoE — senha', pppoePass, 'Ex.: ...Password'],
-    ['pppoePass', 'Senha PPPoE', '', 'Digite a senha do cliente'],
-    ['vlanPath', 'Caminho VLAN', vlan, 'Ex.: ...VLANID'],
-    ['vlanValue', 'VLAN', '', 'Ex.: 100'],
-    ['mtuPath', 'Caminho MTU', mtu, 'Ex.: ...MTU'],
-    ['mtuValue', 'MTU', '1492', '1492 normalmente; confirme no seu cenário'],
-    ['dnsPath', 'Caminho DNS', dns, 'Ex.: ...DNSServers'],
-    ['dnsValue', 'DNS', '8.8.8.8', 'Separe múltiplos DNS conforme o firmware'],
-    ['ssidPath', 'Caminho SSID', ssid, 'Ex.: ...SSID'],
-    ['ssidValue', 'SSID', '', 'Nome do Wi-Fi'],
-    ['wifiPassPath', 'Caminho senha Wi-Fi', wifiPass, 'Ex.: ...PreSharedKey'],
-    ['wifiPass', 'Senha Wi-Fi', '', 'Senha da rede']
+    ['pppoeUser', 'Usuário PPPoE', getValue('Device.PPP.Interface.1.Username'), 'Usuário fornecido pelo provedor'],
+    ['pppoePass', 'Senha PPPoE', '', 'Senha PPPoE'],
+    ['ssid24', 'Nome do Wi-Fi 2,4 GHz', getValue('Device.WiFi.SSID.1.SSID'), 'Ex.: RFN_CLIENTE_2G'],
+    ['ssid5', 'Nome do Wi-Fi 5 GHz', getValue('Device.WiFi.SSID.3.SSID'), 'Ex.: RFN_CLIENTE_5G'],
+    ['wifiPass', 'Senha do Wi-Fi', '', 'Use uma senha forte (mínimo 8 caracteres)']
   ];
-  const html = fields.map(([id, label, val, ph]) => `<div><label>${esc(label)}</label><input id="prov_${id}" value="${esc(val)}" placeholder="${esc(ph)}"></div>`).join('');
+  const html = fields.map(([id, label, val, ph]) => `<div><label>${esc(label)}</label><input id="prov_${id}" value="${esc(val)}" placeholder="${esc(ph)}" ${id.endsWith('Pass') ? 'type="password" autocomplete="new-password"' : ''}></div>`).join('');
   $('deviceTabBody').innerHTML = `<div class="card">
-    <h3 style="margin-top:0">Provisionamento manual do CPE</h3>
-    <p class="hint">Os campos de valor são editáveis. Os caminhos são preenchidos automaticamente quando o parâmetro correspondente já foi coletado; confirme-os antes de enviar. O sistema não inventa parâmetros do firmware.</p>
+    <h3 style="margin-top:0">Provisionamento — perfil RESIDENCIAL</h3>
+    <p class="hint">Configure PPPoE e as duas redes Wi-Fi do MERCUSYS MR60X. Os caminhos TR-069 usados pelo formulário são os identificados no catálogo do equipamento; não é necessário preenchê-los manualmente.</p>
     <div class="two">${html}</div>
-    <div class="actions" style="margin-top:14px"><button onclick="sendProvisioning('${esc(acsId)}')">Enviar para o CPE</button><button class="secondary" onclick="showDeviceTab('params',document.querySelector('.device-tab.active'),null,'${esc(acsId)}')">Ver parâmetros</button></div>
-    <div class="hint-block">PPPoE e VLAN ficam manuais. MTU, DNS e Wi-Fi também podem ser ajustados aqui quando os caminhos reais do MR60X estiverem disponíveis.</div>
+    <div class="actions" style="margin-top:14px"><button onclick="sendProvisioning('${esc(acsId)}')">Enviar configuração RESIDENCIAL</button><button class="secondary" onclick="showDeviceTab('params',document.querySelector('.device-tab.active'),null,'${esc(acsId)}')">Ver parâmetros</button></div>
+    <div class="hint-block">O envio cria uma tarefa no GenieACS e solicita contato com o roteador. A tarefa pode ficar aguardando o próximo Inform; isso não significa que a configuração já foi aplicada. VLAN não será alterada automaticamente.</div>
   </div>`;
 }
 async function sendProvisioning(acsId) {
-  const pairs = [
-    ['prov_pppoeUserPath', 'prov_pppoeUser'], ['prov_pppoePassPath', 'prov_pppoePass'],
-    ['prov_vlanPath', 'prov_vlanValue'], ['prov_mtuPath', 'prov_mtuValue'],
-    ['prov_dnsPath', 'prov_dnsValue'], ['prov_ssidPath', 'prov_ssidValue'],
-    ['prov_wifiPassPath', 'prov_wifiPass']
-  ];
-  const parameterValues = [];
-  for (const [pathId, valueId] of pairs) {
-    const path = $(pathId)?.value.trim(); const value = $(valueId)?.value;
-    if (path && value !== '') parameterValues.push([path, value]);
+  const pppoeUser = $('prov_pppoeUser')?.value.trim();
+  const pppoePass = $('prov_pppoePass')?.value;
+  const ssid24 = $('prov_ssid24')?.value.trim();
+  const ssid5 = $('prov_ssid5')?.value.trim();
+  const wifiPass = $('prov_wifiPass')?.value;
+  if (!pppoeUser || !pppoePass || !ssid24 || !ssid5 || !wifiPass) {
+    showStatus('Preencha usuário e senha PPPoE, os dois nomes de Wi-Fi e a senha Wi-Fi.', false); return;
   }
-  if (!parameterValues.length) { showStatus('Informe pelo menos um caminho de parâmetro e seu valor.', false); return; }
+  if (wifiPass.length < 8) { showStatus('A senha Wi-Fi precisa ter pelo menos 8 caracteres.', false); return; }
+  const parameterValues = [
+    ['Device.PPP.Interface.1.Enable', true],
+    ['Device.PPP.Interface.1.ConnectionTrigger', 'AlwaysOn'],
+    ['Device.PPP.Interface.1.Username', pppoeUser],
+    ['Device.PPP.Interface.1.Password', pppoePass],
+    ['Device.PPP.Interface.1.MaxMRUSize', 1492],
+    ['Device.WiFi.SSID.1.SSID', ssid24],
+    ['Device.WiFi.SSID.3.SSID', ssid5],
+    ['Device.WiFi.AccessPoint.1.Security.PreSharedKey', wifiPass],
+    ['Device.WiFi.AccessPoint.3.Security.PreSharedKey', wifiPass]
+  ];
   try {
-    await api(`/api/acs/devices/${encodeURIComponent(acsId)}/provision`, { method: 'POST', body: JSON.stringify({ parameterValues }) });
-    showStatus(`${parameterValues.length} parâmetro(s) enviado(s) ao GenieACS/CPE.`);
+    const result = await api(`/api/acs/devices/${encodeURIComponent(acsId)}/provision`, { method: 'POST', body: JSON.stringify({ parameterValues }) });
+    showStatus(`Tarefa de provisionamento enviada ao GenieACS (${result.count || parameterValues.length} parâmetros). Aguarde o retorno do MR60X no ACS para confirmar a aplicação.`);
   } catch (e) { showStatus(e.message, false); }
 }
 async function assignProfile(id) { try { await api(`/api/equipment/${id}`, { method: 'PATCH', body: JSON.stringify({ profile_id: $('eProfile').value || null }) }); closeModal(); showStatus('Perfil associado.'); await loadAll(); } catch (e) { showStatus(e.message, false); } }
 async function applyProfile(acsId) { try { const e = equipment.find(x => x.acs_device_id === acsId); if (!e?.profile_id) throw new Error('Associe um perfil antes de aplicar.'); await api(`/api/acs/devices/${encodeURIComponent(acsId)}/apply-profile`, { method: 'POST', body: JSON.stringify({ profile_id: e.profile_id }) }); showStatus('Perfil enviado ao GenieACS/CPE.'); } catch (e) { showStatus(e.message, false); } }
-async function setServiceBlock(acsId, blocked) {
-  const action = blocked ? 'BLOQUEAR a Internet' : 'DESBLOQUEAR a Internet';
-  const value = blocked ? 'Device.PPP.Interface.1.Enable = false' : 'Device.PPP.Interface.1.Enable = true';
-  if (!window.confirm(`${action} neste MR60X?\n\nIsso enviará ${value} ao CPE.`)) return;
-  try {
-    const r = await api(`/api/acs/devices/${encodeURIComponent(acsId)}/service-block`, { method: 'POST', body: JSON.stringify({ blocked }) });
-    showStatus(`${blocked ? 'Bloqueio' : 'Desbloqueio'} ${r.status === 'executed' ? 'aplicado' : 'enfileirado'} no CPE. Teste #${r.runId}.`);
-    await loadAll();
-    const e = equipment.find(x => x.acs_device_id === acsId);
-    if (e) equipmentActions(e.id, acsId);
-  } catch (e) { showStatus(e.message, false); }
-}
 async function renderMr60xLab(acsId) {
   $('deviceTabBody').innerHTML = '<div class="card"><div class="hint">Consultando laboratório determinístico do modelo...</div></div>';
   try {
     const d = await api(`/api/acs/devices/${encodeURIComponent(acsId)}/lab`);
-    const badge = d.supported ? '<span class="badge online">Catálogo MR60X ativo</span>' : '<span class="badge unknown">Modelo sem catálogo</span>';
+    const badge = d.supported ? '<span class="badge online">Catálogo MR60X ativo</span>' : '<span class="badge unknown">Modelo sem catálogo</span>'; const conn = d.connection?.state === 'online' ? '<span class="badge online">CPE online</span>' : '<span class="badge unknown">Sem Inform recente</span>';
     const candidates = (d.candidates || []).map(c => {
       const value = c.sensitive ? (c.discovered ? '[redacted]' : '—') : (c.discovered ? esc(c.value) : '—');
       const writable = c.discovered ? (c.writable ? 'gravável' : 'somente leitura') : 'não observado';
       const probe = c.safeProbe && c.discovered && c.writable ? `<button class="secondary" onclick="labWriteProbe('${esc(acsId)}','${esc(c.path)}')">Write-probe</button>` : '';
       const read = c.discovered ? `<button class="secondary" onclick="labRead('${esc(acsId)}','${esc(c.path)}')">Ler</button>` : '';
-      const inputId = `lab_value_${String(c.id || '').replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-      let editor = '';
-      if (c.discovered && c.writable) {
-        const type = String(c.type || c.type === '' ? c.type : 'xsd:string').toLowerCase();
-        if (type.includes('boolean')) {
-          const current = c.value === true ? 'true' : c.value === false ? 'false' : '';
-          editor = `<select id="${inputId}"><option value="true" ${current === 'true' ? 'selected' : ''}>true</option><option value="false" ${current === 'false' ? 'selected' : ''}>false</option></select>`;
-        } else if (/(unsigned|short|long|int|integer|uint|float|double|decimal)/.test(type)) {
-          editor = `<input id="${inputId}" type="number" value="${c.sensitive ? '' : esc(c.value ?? '')}" step="1">`;
-        } else {
-          editor = `<input id="${inputId}" type="${c.sensitive ? 'password' : 'text'}" value="${c.sensitive ? '' : esc(c.value ?? '')}" placeholder="Novo valor">`;
-        }
-      }
-      const write = c.discovered && c.writable ? `${editor}<button onclick="labWriteValue('${esc(acsId)}','${esc(c.path)}','${esc(c.id)}')">Escrever</button>` : '';
-      return `<div class="kv" style="gap:10px;align-items:flex-start"><div style="min-width:0;flex:1"><b>${esc(c.label)}</b><div class="hint mono">${esc(c.path)}</div><div class="hint">${writable} · tipo ${esc(c.type || '—')} · valor ${value}</div>${write ? `<div class="actions" style="margin-top:8px;flex-wrap:wrap">${write}</div>` : ''}</div><div class="actions">${read}${probe}</div></div>`;
+      return `<div class="kv" style="gap:10px;align-items:flex-start"><div style="min-width:0;flex:1"><b>${esc(c.label)}</b><div class="hint mono">${esc(c.path)}</div><div class="hint">${writable} · tipo ${esc(c.type || '—')} · valor ${value}</div></div><div class="actions">${read}${probe}</div></div>`;
     }).join('');
-    const runs = (d.runs || []).map(r => `<tr><td>${esc(r.id)}</td><td>${esc(r.test_type)}</td><td class="mono">${esc(r.parameter_path || '—')}</td><td><span class="badge ${r.status === 'executed' ? 'online' : 'unknown'}">${esc(r.status)}</span></td><td>${esc(r.interpretation || '')}</td><td class="mono">${esc(r.created_at)}</td></tr>`).join('') || '<tr><td colspan="6" class="empty">Nenhum teste registrado.</td></tr>';
-    $('deviceTabBody').innerHTML = `<div class="card"><div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap"><div><h3 style="margin:0">Laboratório MR60X</h3><p class="hint">${d.supported ? 'Catálogo exato do MERCUSYS MR60X. Nenhuma busca genérica cria caminho de escrita.' : 'Este modelo ainda não possui catálogo determinístico.'}</p></div><div class="actions"><button onclick="labRefresh('${esc(acsId)}')">RefreshObject</button><button class="secondary" onclick="showDeviceTab('lab',document.querySelector('.device-tab.active'),null,'${esc(acsId)}')">Atualizar resultados</button></div></div><div class="hint-block">${badge} Último Inform: <span class="mono">${esc(d.lastInform || '—')}</span></div>${candidates ? `<div class="param-list" style="margin-top:12px">${candidates}</div>` : ''}</div><div class="card" style="margin-top:12px"><h3 style="margin-top:0">Histórico do laboratório</h3><div class="table-wrap"><table><thead><tr><th>ID</th><th>Teste</th><th>Parâmetro</th><th>Status</th><th>Interpretação</th><th>Data</th></tr></thead><tbody>${runs}</tbody></table></div><p class="hint">"queued" significa que o ACS aceitou/enfileirou a tarefa; o resultado real no CPE deve ser confirmado após novo Inform/refresh.</p></div>`;
+    const runs = (d.runs || []).map(r => { const badge = r.status === 'executed' || r.status === 'confirmed' ? 'online' : 'unknown'; return `<tr><td>${esc(r.id)}</td><td>${esc(r.test_type)}</td><td class="mono">${esc(r.parameter_path || '—')}</td><td><span class="badge ${badge}">${esc(r.status)}</span></td><td>${esc(r.interpretation || '')}</td><td class="mono">${esc(r.created_at)}</td></tr>`; }).join('') || '<tr><td colspan="6" class="empty">Nenhum teste registrado.</td></tr>';
+    $('deviceTabBody').innerHTML = `<div class="card"><div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap"><div><h3 style="margin:0">Laboratório MR60X</h3><p class="hint">${d.supported ? 'Catálogo exato do MERCUSYS MR60X. Nenhuma busca genérica cria caminho de escrita.' : 'Este modelo ainda não possui catálogo determinístico.'}</p></div><div class="actions"><button onclick="labRefresh('${esc(acsId)}')">RefreshObject</button><button class="secondary" onclick="showDeviceTab('lab',document.querySelector('.device-tab.active'),null,'${esc(acsId)}')">Atualizar resultados</button></div></div><div class="hint-block">${badge} ${conn} Último Inform: <span class="mono">${esc(d.lastInform || '—')}</span></div>${candidates ? `<div class="param-list" style="margin-top:12px">${candidates}</div>` : ''}</div><div class="card" style="margin-top:12px"><h3 style="margin-top:0">Histórico do laboratório</h3><div class="table-wrap"><table><thead><tr><th>ID</th><th>Teste</th><th>Parâmetro</th><th>Status</th><th>Interpretação</th><th>Data</th></tr></thead><tbody>${runs}</tbody></table></div><p class="hint">"queued" significa que o ACS aceitou a tarefa para o próximo Inform. O histórico é reconciliado automaticamente quando o CPE realmente volta a falar com o ACS.</p></div>`;
   } catch (e) { $('deviceTabBody').innerHTML = `<div class="card empty">${esc(e.message)}</div>`; }
 }
 async function labRefresh(acsId) {
@@ -408,20 +422,6 @@ async function labRefresh(acsId) {
 }
 async function labRead(acsId, pathValue) {
   try { const r = await api(`/api/acs/devices/${encodeURIComponent(acsId)}/lab/read`, { method:'POST', body:JSON.stringify({path:pathValue}) }); showStatus(`Leitura ${r.status === 'executed' ? 'executada' : 'enfileirada'} para ${pathValue}. ${r.status === 'executed' ? `Valor observado: ${r.observedValue ?? '—'}.` : 'Confirme após novo Inform.'} Teste #${r.runId}.`); } catch(e) { showStatus(e.message,false); }
-}
-async function labWriteValue(acsId, pathValue, candidateId) {
-  const inputId = `lab_value_${String(candidateId || '').replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-  const field = $(inputId);
-  if (!field) { showStatus('Campo de escrita não encontrado.', false); return; }
-  const value = field.value;
-  if (value === '') { showStatus('Informe um valor antes de escrever.', false); return; }
-  const ok = window.confirm(`Enviar o valor informado para ${pathValue}?\n\nEssa ação altera o CPE. Para o teste de bloqueio, false desabilita o PPPoE.`);
-  if (!ok) return;
-  try {
-    const r = await api(`/api/acs/devices/${encodeURIComponent(acsId)}/lab/write`, { method:'POST', body:JSON.stringify({path:pathValue, value}) });
-    showStatus(`Escrita ${r.status === 'executed' ? 'executada' : 'enfileirada'} para ${pathValue}. ${r.status === 'executed' ? `Valor observado: ${r.observedValue ?? '—'}.` : 'Confirme após novo Inform.'} Teste #${r.runId}.`);
-    if (r.status === 'executed') setTimeout(() => showDeviceTab('lab', document.querySelector('.device-tab.active'), null, acsId), 250);
-  } catch(e) { showStatus(e.message,false); }
 }
 async function labWriteProbe(acsId, pathValue) {
   const ok = window.confirm(`O teste reenviará o valor ATUAL de ${pathValue} para verificar se o CPE aceita setParameterValues sem alterar efetivamente o valor. Continuar?`);

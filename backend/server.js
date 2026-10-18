@@ -3,23 +3,20 @@ import pg from "pg";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 const { Pool } = pg;
 const app = express();
 app.set("trust proxy", 1);
 const port = Number(process.env.PORT || 8080);
 const databaseUrl = process.env.DATABASE_URL;
-const adminUsername = process.env.API_ADMIN_USERNAME;
-const adminPassword = process.env.API_ADMIN_PASSWORD;
+const supabaseUrl = (process.env.SUPABASE_URL || "").replace(/\/$/, "");
+const supabasePublishableKey = process.env.SUPABASE_PUBLISHABLE_KEY || "";
 const cpeAdminPassword = process.env.CPE_ADMIN_PASSWORD;
-const sessionSecret = process.env.API_SESSION_SECRET;
 const cookieSecure = process.env.API_COOKIE_SECURE === "true";
-const sessionLifetimeSeconds = 8 * 60 * 60;
-const loginAttempts = new Map();
+const sessionLifetimeSeconds = 60 * 60;
 
-if (!adminUsername || !adminPassword || adminPassword.length < 14 || !sessionSecret || sessionSecret.length < 32) {
-  throw new Error("Configure API_ADMIN_USERNAME, API_ADMIN_PASSWORD (mínimo 14 caracteres) e API_SESSION_SECRET (mínimo 32 caracteres)");
+if (!supabaseUrl || !supabasePublishableKey) {
+  throw new Error("Configure SUPABASE_URL e SUPABASE_PUBLISHABLE_KEY para usar Supabase Auth");
 }
 if (!databaseUrl) {
   throw new Error("DATABASE_URL deve apontar para o PostgreSQL do Supabase");
@@ -57,87 +54,74 @@ async function nbiFetch(endpoint, options = {}) {
 }
 
 
-function constantTimeEqual(left, right) {
-  const leftBuffer = Buffer.from(String(left));
-  const rightBuffer = Buffer.from(String(right));
-  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
-}
-
 function sessionCookie(req) {
   const cookies = req.headers.cookie?.split(";") || [];
   const session = cookies.map((cookie) => cookie.trim()).find((cookie) => cookie.startsWith("rfn_session="));
   return session?.slice("rfn_session=".length) || "";
 }
 
-function validSession(req) {
-  const token = sessionCookie(req);
-  const separator = token.lastIndexOf(".");
-  if (separator < 1) return false;
-
-  const payload = token.slice(0, separator);
-  const signature = token.slice(separator + 1);
-  const expected = createHmac("sha256", sessionSecret).update(payload).digest("base64url");
-  if (!constantTimeEqual(signature, expected)) return false;
-
-  try {
-    const claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-    return claims.sub === adminUsername && Number(claims.exp) > Math.floor(Date.now() / 1000);
-  } catch {
-    return false;
-  }
+function setSessionCookie(res, token, maxAge = sessionLifetimeSeconds) {
+  const secure = cookieSecure ? "; Secure" : "";
+  res.setHeader("Set-Cookie", `rfn_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${secure}`);
 }
 
-function requireAdminSession(req, res, next) {
-  if (!validSession(req)) return res.status(401).json({ error: "Autenticação necessária" });
-  next();
+async function getSupabaseUser(token) {
+  if (!token) return null;
+  const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
+    headers: { apikey: supabasePublishableKey, Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) return null;
+  return response.json();
+}
+
+async function getProfile(userId) {
+  const result = await pool.query("select id, email, full_name, role from public.profiles where id=$1 limit 1", [userId]);
+  return result.rows[0] || null;
+}
+
+async function requireAdminSession(req, res, next) {
+  try {
+    const token = sessionCookie(req);
+    const user = await getSupabaseUser(token);
+    if (!user?.id) return res.status(401).json({ error: "Autenticação necessária" });
+    const profile = await getProfile(user.id);
+    if (!profile) return res.status(403).json({ error: "Perfil de acesso não encontrado" });
+    if (profile.role !== "admin") return res.status(403).json({ error: "Acesso restrito a administradores" });
+    req.authUser = user;
+    req.authProfile = profile;
+    next();
+  } catch (error) { next(error); }
 }
 app.use("/api", (_req, res, next) => {
   res.setHeader("Cache-Control", "no-store");
   next();
 });
 
-app.post("/api/auth/login", (req, res) => {
-  const now = Date.now();
-  const ip = req.ip || "unknown";
-  for (const [address, entry] of loginAttempts) {
-    if (entry.expiresAt <= now) loginAttempts.delete(address);
+app.post("/api/auth/session", async (req, res) => {
+  try {
+    const token = String(req.body?.access_token || "");
+    if (!token || token.length > 10000) return res.status(400).json({ error: "Token de sessão inválido" });
+    const user = await getSupabaseUser(token);
+    if (!user?.id) return res.status(401).json({ error: "Sessão Supabase inválida ou expirada" });
+    setSessionCookie(res, token);
+    res.json({ ok: true });
+  } catch {
+    res.status(502).json({ error: "Não foi possível validar a sessão Supabase" });
   }
-  let attempt = loginAttempts.get(ip);
-  if (!attempt || attempt.expiresAt <= now) {
-    if (loginAttempts.size >= 10000) return res.status(429).json({ error: "Muitas tentativas. Aguarde e tente novamente." });
-    attempt = { count: 0, expiresAt: now + 15 * 60 * 1000 };
-    loginAttempts.set(ip, attempt);
-  }
-  if (attempt.count >= 5) return res.status(429).json({ error: "Muitas tentativas. Aguarde 15 minutos." });
-
-  const usernameMatches = constantTimeEqual(req.body?.username || "", adminUsername);
-  const passwordMatches = constantTimeEqual(req.body?.password || "", adminPassword);
-  if (!usernameMatches || !passwordMatches) {
-    attempt.count += 1;
-    return res.status(401).json({ error: "Usuário ou senha inválidos" });
-  }
-
-  loginAttempts.delete(ip);
-  const claims = Buffer.from(JSON.stringify({
-    sub: adminUsername,
-    exp: Math.floor(now / 1000) + sessionLifetimeSeconds,
-  })).toString("base64url");
-  const signature = createHmac("sha256", sessionSecret).update(claims).digest("base64url");
-  const secure = cookieSecure ? "; Secure" : "";
-  res.setHeader("Set-Cookie", `rfn_session=${claims}.${signature}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${sessionLifetimeSeconds}${secure}`);
-  res.json({ ok: true, username: adminUsername });
 });
 
 app.post("/api/auth/logout", (_req, res) => {
-  const secure = cookieSecure ? "; Secure" : "";
-  res.setHeader("Set-Cookie", `rfn_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}`);
+  setSessionCookie(res, "", 0);
   res.status(204).end();
 });
 
-app.use("/api", requireAdminSession);
+app.use("/api", (req, res, next) => {
+  if (req.path.startsWith("/auth/")) return next();
+  return requireAdminSession(req, res, next);
+});
 
-app.get("/api/auth/me", (_req, res) => {
-  res.json({ authenticated: true, username: adminUsername });
+app.get("/api/auth/me", (req, res) => {
+  res.json({ authenticated: true, user: { id: req.authUser.id, email: req.authUser.email }, profile: req.authProfile });
 });
 
 async function syncAcsDevices() {
@@ -450,6 +434,59 @@ function redactValue(value, sensitive = false) {
   return sensitive ? (value === null || value === undefined ? null : "[redacted]") : value;
 }
 
+function informAgeMs(lastInform) {
+  if (!lastInform) return Number.POSITIVE_INFINITY;
+  const ts = Date.parse(lastInform);
+  return Number.isFinite(ts) ? Math.max(0, Date.now() - ts) : Number.POSITIVE_INFINITY;
+}
+
+function connectionState(lastInform) {
+  const age = informAgeMs(lastInform);
+  if (!lastInform) return "unknown";
+  if (age <= 3 * 60 * 1000) return "online";
+  return "stale";
+}
+
+async function reconcileLabRuns(deviceId, device) {
+  const values = flattenDevice(device);
+  const liveByPath = new Map(values.map((item) => [item.path, item]));
+  const latestInformMs = Date.parse(device?._lastInform || "");
+  const runs = await pool.query(
+    `select id, test_type, parameter_path, status, requested_value, observed_value, task_result, created_at
+     from lab_runs where device_id=$1 and status='queued' order by id desc limit 50`,
+    [deviceId]
+  );
+
+  for (const run of runs.rows) {
+    const createdMs = new Date(run.created_at).getTime();
+    const live = run.parameter_path ? liveByPath.get(run.parameter_path) : null;
+    const liveMs = live?.timestamp ? Date.parse(live.timestamp) : Number.NaN;
+    const informedAfterTask = Number.isFinite(latestInformMs) && latestInformMs > createdMs;
+    const parameterRefreshedAfterTask = Number.isFinite(liveMs) && liveMs > createdMs;
+
+    if (run.test_type === "refresh" && informedAfterTask) {
+      await pool.query(
+        `update lab_runs set status='executed', observed_value=$1::jsonb, task_result=$2::jsonb where id=$3`,
+        [JSON.stringify({ lastInform: device._lastInform || null }), JSON.stringify({ ...(run.task_result || {}), reconciled: true, reconciled_at: new Date().toISOString() }), run.id]
+      );
+    } else if (run.test_type === "read" && (parameterRefreshedAfterTask || informedAfterTask)) {
+      const candidate = modelCatalogFor(device).find((item) => item.path === run.parameter_path);
+      const observedValue = live ? redactValue(live.value, candidate?.sensitive) : null;
+      await pool.query(
+        `update lab_runs set status='executed', observed_value=$1::jsonb, task_result=$2::jsonb where id=$3`,
+        [JSON.stringify(observedValue), JSON.stringify({ ...(run.task_result || {}), reconciled: true, reconciled_at: new Date().toISOString() }), run.id]
+      );
+    } else if (run.test_type === "write-probe" && (parameterRefreshedAfterTask || informedAfterTask)) {
+      const candidate = modelCatalogFor(device).find((item) => item.path === run.parameter_path);
+      const observedValue = live ? redactValue(live.value, candidate?.sensitive) : null;
+      await pool.query(
+        `update lab_runs set status='confirmed', observed_value=$1::jsonb, task_result=$2::jsonb where id=$3`,
+        [JSON.stringify(observedValue), JSON.stringify({ ...(run.task_result || {}), reconciled: true, reconciled_at: new Date().toISOString() }), run.id]
+      );
+    }
+  }
+}
+
 async function insertLabRun(data) {
   const q = await pool.query(
     `insert into lab_runs (device_id, manufacturer, model, test_type, parameter_path, requested_value, observed_value, task_result, status)
@@ -550,67 +587,6 @@ app.post("/api/acs/devices/:deviceId/provision", async (req, res) => {
   }
 });
 
-app.post("/api/acs/devices/:deviceId/service-block", async (req, res) => {
-  try {
-    const deviceId = req.params.deviceId;
-    const blocked = req.body?.blocked === true;
-    const parameterPath = "Device.PPP.Interface.1.Enable";
-    const devices = await nbiFetch(`/devices/?query=${encodeURIComponent(JSON.stringify({ _id: deviceId }))}`);
-    const device = Array.isArray(devices) ? devices[0] : null;
-    if (!device) return res.status(404).json({ error: "CPE não encontrado no GenieACS" });
-
-    const manufacturer = String(device?._deviceId?._Manufacturer || "").trim().toLowerCase();
-    const model = String(device?._deviceId?._ProductClass || "").trim().toUpperCase();
-    if (!(manufacturer === "mercusys" && model === "MR60X")) {
-      return res.status(409).json({ error: "Bloqueio por PPPoE disponível apenas para o catálogo MR60X nesta versão" });
-    }
-
-    const live = flattenDevice(device).find((item) => item.path === parameterPath);
-    if (!live || live.writable !== true) {
-      return res.status(409).json({ error: "Device.PPP.Interface.1.Enable não está disponível como gravável no CPE" });
-    }
-
-    const value = !blocked;
-    const task = { name: "setParameterValues", parameterValues: [[parameterPath, value]] };
-    const result = await nbiRequest(`/devices/${encodeURIComponent(deviceId)}/tasks?connection_request`, {
-      method: "POST",
-      body: JSON.stringify(task),
-    });
-    const status = result.status === 200 ? "executed" : "queued";
-
-    if (status === "executed") {
-      await pool.query(
-        "update equipment set service_status=$1 where acs_device_id=$2",
-        [blocked ? "blocked" : "enabled", deviceId]
-      );
-    }
-
-    const run = await insertLabRun({
-      deviceId,
-      manufacturer: device?._deviceId?._Manufacturer,
-      model: device?._deviceId?._ProductClass,
-      testType: blocked ? "service-block" : "service-unblock",
-      parameterPath,
-      requestedValue: value,
-      taskResult: result.data,
-      observedValue: null,
-      status,
-    });
-
-    res.status(result.status === 202 ? 202 : 200).json({
-      ok: true,
-      blocked,
-      status,
-      runId: run.id,
-      parameterPath,
-      requestedValue: value,
-      result: result.data,
-    });
-  } catch (e) {
-    res.status(502).json({ ok: false, error: "Falha ao alterar o estado do serviço no CPE", details: e.details || e.message });
-  }
-});
-
 app.post("/api/acs/devices/:deviceId/apply-profile", async (req, res) => {
   try {
     const profileId = Number(req.body.profile_id);
@@ -640,6 +616,7 @@ app.get("/api/acs/devices/:deviceId/lab", async (req, res) => {
     const device = Array.isArray(devices) ? devices[0] : null;
     if (!device) return res.status(404).json({ error: "CPE não encontrado no GenieACS" });
     const identity = device._deviceId || {};
+    await reconcileLabRuns(deviceId, device);
     const catalog = catalogSnapshot(device);
     const liveByPath = new Map(flattenDevice(device).map((item) => [item.path, item]));
     const runs = await pool.query(
@@ -655,9 +632,13 @@ app.get("/api/acs/devices/:deviceId/lab", async (req, res) => {
         cache_value: live ? redactValue(live.value, modelCatalogFor(device).find((c) => c.path === run.parameter_path)?.sensitive) : null,
         cache_writable: live?.writable === true,
         cache_type: live?.type || null,
-        interpretation: run.test_type === "write-probe"
-          ? (live ? "valor presente no cache após consulta; isso não prova sozinho que a escrita foi persistida" : "aguardando novo Inform/refresh")
-          : (live ? "valor observado no cache atual" : "aguardando novo Inform/refresh"),
+        interpretation: run.status === "queued"
+          ? "tarefa enfileirada no ACS; aguardando novo Inform do CPE"
+          : run.test_type === "write-probe"
+            ? "write-probe confirmado após Inform; isso não prova sozinho persistência após reboot/reset"
+            : run.test_type === "read"
+              ? (live ? "leitura executada; valor confirmado no cache após a tarefa" : "leitura executada, mas o parâmetro não foi encontrado no cache")
+              : "refresh executado; novo Inform recebido do CPE",
       };
     });
     res.json({
@@ -667,6 +648,7 @@ app.get("/api/acs/devices/:deviceId/lab", async (req, res) => {
       model: { manufacturer: identity._Manufacturer || null, productClass: identity._ProductClass || null },
       lastInform: device._lastInform || null,
       lastBoot: device._lastBoot || null,
+      connection: { state: connectionState(device._lastInform || null), ageMs: informAgeMs(device._lastInform || null) },
       candidates: catalog,
       runs: enrichedRuns,
     });
@@ -708,6 +690,16 @@ app.post("/api/acs/devices/:deviceId/lab/read", async (req, res) => {
     if (!device) return res.status(404).json({ error: "CPE não encontrado no GenieACS" });
     const candidate = modelCatalogFor(device).find((item) => item.path === pathValue);
     if (!candidate) return res.status(422).json({ error: "Parâmetro fora do catálogo determinístico do modelo" });
+    if (connectionState(device._lastInform || null) !== "online") {
+      return res.status(409).json({ error: "CPE sem Inform recente. Conecte o MR60X ao ACS antes de iniciar uma nova leitura." });
+    }
+    const existing = await pool.query(
+      `select id from lab_runs where device_id=$1 and test_type='read' and parameter_path=$2 and status='queued' order by id desc limit 1`,
+      [deviceId, pathValue]
+    );
+    if (existing.rowCount) {
+      return res.json({ ok: true, status: "queued", runId: existing.rows[0].id, path: pathValue, observedValue: null, deduplicated: true, result: null });
+    }
     const task = { name: "getParameterValues", parameterNames: [pathValue] };
     const result = await nbiRequest(`/devices/${encodeURIComponent(deviceId)}/tasks?timeout=5000&connection_request`, { method: "POST", body: JSON.stringify(task) });
     const status = result.status === 200 ? "executed" : "queued";
@@ -728,66 +720,6 @@ app.post("/api/acs/devices/:deviceId/lab/read", async (req, res) => {
   }
 });
 
-app.post("/api/acs/devices/:deviceId/lab/write", async (req, res) => {
-  try {
-    const deviceId = req.params.deviceId;
-    const pathValue = String(req.body?.path || "").trim();
-    const rawValue = req.body?.value;
-    if (!pathValue) return res.status(400).json({ error: "path é obrigatório" });
-    if (rawValue === undefined) return res.status(400).json({ error: "value é obrigatório" });
-
-    const devices = await nbiFetch(`/devices/?query=${encodeURIComponent(JSON.stringify({ _id: deviceId }))}`);
-    const device = Array.isArray(devices) ? devices[0] : null;
-    if (!device) return res.status(404).json({ error: "CPE não encontrado no GenieACS" });
-
-    const candidate = modelCatalogFor(device).find((item) => item.path === pathValue);
-    if (!candidate) return res.status(422).json({ error: "Parâmetro fora do catálogo determinístico do modelo" });
-
-    const live = flattenDevice(device).find((item) => item.path === pathValue);
-    if (!live) return res.status(409).json({ error: "Parâmetro ainda não está presente no cache; execute Refresh/Inform antes da escrita" });
-    if (live.writable !== true) return res.status(409).json({ error: "O CPE/firmware reportou o parâmetro como não gravável" });
-
-    const type = String(live.type || candidate.type || "xsd:string").toLowerCase();
-    let value = rawValue;
-    if (type.includes("boolean")) {
-      if (rawValue === true || rawValue === false) value = rawValue;
-      else if (String(rawValue).toLowerCase() === "true") value = true;
-      else if (String(rawValue).toLowerCase() === "false") value = false;
-      else return res.status(400).json({ error: "Valor booleano inválido; use true ou false" });
-    } else if (/(unsigned|short|long|int|integer|uint|float|double|decimal)/.test(type)) {
-      const numeric = Number(rawValue);
-      if (!Number.isFinite(numeric)) return res.status(400).json({ error: "Valor numérico inválido" });
-      value = numeric;
-    } else {
-      value = String(rawValue);
-    }
-
-    const parameterValues = [[pathValue, value, live.type || candidate.type || "xsd:string"]];
-    const task = { name: "setParameterValues", parameterValues };
-    const result = await nbiRequest(`/devices/${encodeURIComponent(deviceId)}/tasks?timeout=5000&connection_request`, {
-      method: "POST", body: JSON.stringify(task)
-    });
-    const status = result.status === 200 ? "executed" : "queued";
-    let observedValue = null;
-    if (status === "executed") {
-      const latestDevices = await nbiFetch(`/devices/?query=${encodeURIComponent(JSON.stringify({ _id: deviceId }))}`);
-      const latestDevice = Array.isArray(latestDevices) ? latestDevices[0] : null;
-      const latestLive = latestDevice ? flattenDevice(latestDevice).find((item) => item.path === pathValue) : null;
-      observedValue = latestLive ? redactValue(latestLive.value, candidate.sensitive) : null;
-    }
-
-    const safeRequested = redactValue(value, candidate.sensitive);
-    const run = await insertLabRun({
-      deviceId, manufacturer: device?._deviceId?._Manufacturer, model: device?._deviceId?._ProductClass,
-      testType: "write", parameterPath: pathValue, requestedValue: safeRequested,
-      observedValue, taskResult: result.data, status,
-    });
-    res.status(result.status === 202 ? 202 : 200).json({ ok: true, status, runId: run.id, path: pathValue, requestedValue: safeRequested, observedValue, result: result.data });
-  } catch (e) {
-    res.status(502).json({ ok: false, error: "Falha ao escrever parâmetro no CPE", details: e.details || e.message });
-  }
-});
-
 app.post("/api/acs/devices/:deviceId/lab/write-probe", async (req, res) => {
   try {
     const deviceId = req.params.deviceId;
@@ -799,6 +731,16 @@ app.post("/api/acs/devices/:deviceId/lab/write-probe", async (req, res) => {
     const candidate = modelCatalogFor(device).find((item) => item.path === pathValue);
     if (!candidate) return res.status(422).json({ error: "Parâmetro fora do catálogo determinístico do modelo" });
     if (!candidate.safeProbe) return res.status(409).json({ error: "Este parâmetro não está autorizado para write-probe seguro" });
+    if (connectionState(device._lastInform || null) !== "online") {
+      return res.status(409).json({ error: "CPE sem Inform recente. Conecte o MR60X ao ACS antes de iniciar um novo write-probe." });
+    }
+    const existing = await pool.query(
+      `select id from lab_runs where device_id=$1 and test_type='write-probe' and parameter_path=$2 and status='queued' order by id desc limit 1`,
+      [deviceId, pathValue]
+    );
+    if (existing.rowCount) {
+      return res.json({ ok: true, status: "queued", runId: existing.rows[0].id, path: pathValue, observedValue: null, deduplicated: true, result: null });
+    }
     const live = flattenDevice(device).find((item) => item.path === pathValue);
     if (!live) return res.status(409).json({ error: "Parâmetro ainda não está presente no cache; execute Refresh/Inform antes do teste" });
     if (live.writable !== true) return res.status(409).json({ error: "O CPE/firmware reportou o parâmetro como não gravável" });
