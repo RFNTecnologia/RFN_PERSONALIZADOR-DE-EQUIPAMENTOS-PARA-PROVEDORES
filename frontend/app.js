@@ -1,6 +1,7 @@
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]));
 let equipment = [], profiles = [], acs = [], providerSettings = null;
+let currentProvisionValues = [];
 
 function showStatus(msg, ok = true) {
   $('status').textContent = msg;
@@ -16,6 +17,7 @@ function showPage(name, btn) {
   if (name === 'profiles') renderProfiles();
   if (name === 'isp') loadProviderSettings();
   if (name === 'acs') loadACS();
+  if (name === 'compatibility') renderCompatibilityCatalog($('compatSearch')?.value || '');
 }
 async function api(url, opt = {}) {
   if (authSession?.access_token && !url.startsWith('/api/auth/')) { await ensureFreshSession(); await syncAuthCookie(authSession); }
@@ -135,6 +137,86 @@ function renderProfiles() {
   const g = $('profilesGrid');
   if (!profiles.length) { g.innerHTML = '<div class="card empty">Nenhum perfil.</div>'; return; }
   g.innerHTML = profiles.map(p => `<div class="card"><h3 style="margin-top:0">${esc(p.name)}</h3><p class="hint">${esc(p.description || '')}</p><div class="kv"><span>Parâmetros TR-069</span><b>${Array.isArray(p.config?.parameterValues) ? p.config.parameterValues.length : 0}</b></div><pre class="hint mono" style="white-space:pre-wrap">${esc(JSON.stringify(p.config, null, 2))}</pre><button onclick="editProfile(${p.id})">Editar</button></div>`).join('');
+}
+
+const compatibilityCatalog = [
+  {
+    manufacturer: 'MERCUSYS',
+    models: 'MR60X V2 — CPE atualmente em laboratório',
+    resetMethod: 'ISP Preset / Agile Config 2.1 é listado oficialmente para MR60X V2. A combinação exata de revisão/firmware do CPE de laboratório ainda precisa de confirmação do fabricante.',
+    remote: 'TR-069/GenieACS confirmado no laboratório: o MR60X aparece online e reporta parâmetros.',
+    status: 'Em validação com fabricante; solicitação de compatibilidade já enviada.',
+    next: 'Confirmar revisão/firmware e obter o pacote oficial antes de gravar padrões persistentes.',
+    source: 'MERCUSYS — ISP Preset',
+    url: 'https://www.mercusys.com.br/support/isp/',
+    tags: 'mercusys mr60x v2 agile config 2.1 isp preset genieacs tr-069 reset firmware'
+  },
+  {
+    manufacturer: 'TP-Link',
+    models: 'Exemplos documentados: Archer C6 (revisão/região específica), Archer A6, Archer C80; há outros modelos nas listas oficiais.',
+    resetMethod: 'Aginet Config / Agile Config para modelos e revisões explicitamente suportados; permite definir parâmetros ISP persistentes após reset.',
+    remote: 'TR-069 depende do modelo e firmware. A lista oficial diferencia suporte nativo e suporte com firmware especial.',
+    status: 'Base oficial disponível; inventário exato do parque RFN ainda precisa ser cadastrado.',
+    next: 'Registrar o modelo completo, revisão de hardware, região e versão de firmware antes de selecionar um fluxo.',
+    source: 'TP-Link Brasil — Aginet/Agile Config',
+    url: 'https://www.tp-link.com/br/solution/agile-config/',
+    secondarySource: 'Tabela Agile Config/TR-069',
+    secondaryUrl: 'https://www.tp-link.com/br/support/faq/2932/',
+    tags: 'tp-link tplink aginet agile config archer c6 archer a6 archer c80 tr-069 reset'
+  },
+  {
+    manufacturer: 'Intelbras',
+    models: 'Modelos listados no Portal Customize incluem Twibi Giga+, ACtion RF 1200, RF 301 K e IWR 3000 N.',
+    resetMethod: 'Portal Customize cria firmware customizado com padrões de fábrica do provedor para os modelos suportados.',
+    remote: 'A compatibilidade com GenieACS/TR-069 precisa ser validada separadamente para o modelo e firmware.',
+    status: 'Mecanismo oficial de padrões persistentes documentado para modelos da lista; modelos exatos usados no RFN ainda precisam ser identificados.',
+    next: 'Conferir o modelo na lista do Portal Customize e registrar se o CPE também oferece TR-069.',
+    source: 'Intelbras — Portal Customize',
+    url: 'https://www.intelbras.com/pt-br/customize',
+    tags: 'intelbras customize rf 1200 rf 301k iwr 3000 n twibi giga reset firmware tr-069'
+  },
+  {
+    manufacturer: 'ZTE',
+    models: 'Modelos do inventário RFN: ZXHN F6201B e F6600P.',
+    resetMethod: 'Não há um mecanismo único de personalização pós-reset confirmado para todos os modelos/revisões. Depende do firmware fornecido ao provedor e do procedimento OEM.',
+    remote: 'O fabricante documenta TR-069 e OMCI no ZXHN F6201B. O F6600P precisa de confirmação específica de firmware/operadora.',
+    status: 'Gerenciamento do F6201B documentado; persistência e método de recuperação pós-reset ainda não confirmados.',
+    next: 'Confirmar variante, versão do firmware do provedor e procedimento autorizado para padrões persistentes.',
+    source: 'ZTE — ZXHN F6201B',
+    url: 'https://www.zte.com.cn/global/home_and_enterprise/campus_network/zxhn_f6201b.html',
+    tags: 'zte zxhn f6201b f6600p omci tr-069 reset firmware'
+  },
+  {
+    manufacturer: 'C-Data',
+    models: 'Modelos do inventário RFN: FD511G-X-F670 e FD514GS3-R850.',
+    resetMethod: 'Padrão persistente pós-reset ainda precisa de confirmação por modelo/firmware. Em ONU/ONT, a restauração e o reprovisionamento também podem depender da OLT/OMCI.',
+    remote: 'A C-Data documenta fluxo TR-069 para vincular ONUs compatíveis ao CMS/ACS por meio do perfil na OLT.',
+    status: 'Fluxo geral de TR-069/CMS documentado; compatibilidade exata dos dois modelos e comportamento de reset pendentes.',
+    next: 'Registrar OLT usada, revisão/firmware da ONU/ONT e verificar o perfil TR-069 e a recuperação após reset em laboratório.',
+    source: 'C-Data — configuração TR-069 ONU/CMS',
+    url: 'https://pt.cdatatec.com/video/tr-069-configuration-for-onu-to-cms-connectivity-c-data-cms-tutorial-series.html',
+    tags: 'c-data cdata fd511g-x-f670 fd514gs3-r850 onu ont olt omci tr-069 cms acs reset'
+  }
+];
+
+function renderCompatibilityCatalog(filter = '') {
+  const grid = $('compatibilityGrid');
+  if (!grid) return;
+  const q = String(filter || '').trim().toLocaleLowerCase('pt-BR');
+  const records = compatibilityCatalog.filter(x => !q || `${x.manufacturer} ${x.models} ${x.resetMethod} ${x.remote} ${x.status} ${x.next} ${x.tags}`.toLocaleLowerCase('pt-BR').includes(q));
+  if (!records.length) {
+    grid.innerHTML = '<div class="card empty">Nenhum registro corresponde ao filtro.</div>';
+    return;
+  }
+  grid.innerHTML = records.map(x => `<div class="card" style="min-width:0">
+    <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap"><h3 style="margin:0">${esc(x.manufacturer)}</h3><span class="badge ${x.manufacturer === 'MERCUSYS' ? 'online' : 'unknown'}">${x.manufacturer === 'MERCUSYS' ? 'Em laboratório' : 'Requer validação por modelo'}</span></div>
+    <p style="margin:10px 0 8px"><b>Modelos</b><br>${esc(x.models)}</p>
+    <div class="kv" style="align-items:flex-start"><b style="min-width:132px">Pós-reset</b><span>${esc(x.resetMethod)}</span></div>
+    <div class="kv" style="align-items:flex-start"><b style="min-width:132px">ACS / gerência</b><span>${esc(x.remote)}</span></div>
+    <div class="kv" style="align-items:flex-start"><b style="min-width:132px">Estado no RFN</b><span>${esc(x.status)}</span></div>
+    <div class="hint-block"><b>Próxima ação:</b> ${esc(x.next)}</div>
+    <div class="actions" style="margin-top:12px"><a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer" class="button-link">${esc(x.source)}</a>${x.secondaryUrl ? `<a href="${esc(x.secondaryUrl)}" target="_blank" rel="noopener noreferrer" class="button-link secondary-link">${esc(x.secondarySource)}</a>` : ''}</div>
+  </div>`).join('');
 }
 function renderProviderSettings() {
   const v = providerSettings || {};
@@ -353,50 +435,126 @@ function findParameterPath(values, exactPaths, needles = []) {
   return '';
 }
 function renderProvisionForm(values, acsId) {
+  currentProvisionValues = Array.isArray(values) ? values : [];
   const getValue = (path) => {
-    const item = (values || []).find(x => x.path === path);
+    const item = currentProvisionValues.find(x => x.path === path);
     return item && item.value !== undefined && item.value !== null ? String(item.value) : '';
   };
+  const field = (id, label, val, ph) => `<div><label>${esc(label)}</label><input id="prov_${id}" value="${esc(val)}" placeholder="${esc(ph)}" ${id.endsWith('Pass') ? 'type="password" autocomplete="new-password"' : ''}></div>`;
   const fields = [
-    ['pppoeUser', 'Usuário PPPoE', getValue('Device.PPP.Interface.1.Username'), 'Usuário fornecido pelo provedor'],
-    ['pppoePass', 'Senha PPPoE', '', 'Senha PPPoE'],
-    ['ssid24', 'Nome do Wi-Fi 2,4 GHz', getValue('Device.WiFi.SSID.1.SSID'), 'Ex.: RFN_CLIENTE_2G'],
-    ['ssid5', 'Nome do Wi-Fi 5 GHz', getValue('Device.WiFi.SSID.3.SSID'), 'Ex.: RFN_CLIENTE_5G'],
-    ['wifiPass', 'Senha do Wi-Fi', '', 'Use uma senha forte (mínimo 8 caracteres)']
+    field('pppoeUser', 'Usuário PPPoE', getValue('Device.PPP.Interface.1.Username'), 'Usuário de teste criado no MikroTik'),
+    field('pppoePass', 'Senha PPPoE', '', 'Senha do usuário PPPoE de teste'),
+    field('ssid24', 'Nome do Wi-Fi 2,4 GHz', getValue('Device.WiFi.SSID.1.SSID'), 'Ex.: RFN_LAB_24'),
+    field('ssid5', 'Nome do Wi-Fi 5 GHz', getValue('Device.WiFi.SSID.3.SSID'), 'Ex.: RFN_LAB_5G'),
+    field('wifiPass', 'Senha do Wi-Fi', '', '8 a 63 caracteres; será usada nas duas bandas')
   ];
-  const html = fields.map(([id, label, val, ph]) => `<div><label>${esc(label)}</label><input id="prov_${id}" value="${esc(val)}" placeholder="${esc(ph)}" ${id.endsWith('Pass') ? 'type="password" autocomplete="new-password"' : ''}></div>`).join('');
+  const valText = path => {
+    const value = getValue(path);
+    return value || 'não informado';
+  };
+  const wanPort = valText('Device.Ethernet.Interface.3.Status');
+  const wanLink = valText('Device.Ethernet.Link.2.Status');
+  const pppStatus = valText('Device.PPP.Interface.1.ConnectionStatus');
+  const band5Enabled = getValue('Device.WiFi.Radio.2.Enable').toLowerCase() === 'true'
+    && getValue('Device.WiFi.SSID.3.Enable').toLowerCase() === 'true'
+    && getValue('Device.WiFi.AccessPoint.3.Enable').toLowerCase() === 'true';
+  const physicalUp = wanPort.toLowerCase() === 'up' && wanLink.toLowerCase() === 'up';
+  const health = `<div class="kv"><span>Porta WAN (EWAN)</span><b>${esc(wanPort)}</b></div>
+    <div class="kv"><span>Link Ethernet WAN</span><b>${esc(wanLink)}</b></div>
+    <div class="kv"><span>Estado PPPoE atual</span><b>${esc(pppStatus)}</b></div>
+    <div class="kv"><span>Rádio / SSID / AP 5 GHz</span><b>${band5Enabled ? 'Habilitados' : 'Há componente desabilitado'}</b></div>`;
+  const wanWarning = physicalUp ? '' : `<div class="hint-block" style="border-left:4px solid #c88619;padding-left:10px"><b>Atenção:</b> o cache do ACS informa a WAN como não conectada fisicamente (EWAN: ${esc(wanPort)}; Link 2: ${esc(wanLink)}). Confirme o cabo entre o MikroTik e a porta WAN. A tarefa pode ser enviada pelo canal de gerenciamento, mas o PPPoE não conectará enquanto o link físico estiver inativo.</div>`;
   $('deviceTabBody').innerHTML = `<div class="card">
     <h3 style="margin-top:0">Provisionamento — perfil RESIDENCIAL</h3>
-    <p class="hint">Configure PPPoE e as duas redes Wi-Fi do MERCUSYS MR60X. Os caminhos TR-069 usados pelo formulário são os identificados no catálogo do equipamento; não é necessário preenchê-los manualmente.</p>
-    <div class="two">${html}</div>
-    <div class="actions" style="margin-top:14px"><button onclick="sendProvisioning('${esc(acsId)}')">Enviar configuração RESIDENCIAL</button><button class="secondary" onclick="showDeviceTab('params',document.querySelector('.device-tab.active'),null,'${esc(acsId)}')">Ver parâmetros</button></div>
-    <div class="hint-block">O envio cria uma tarefa no GenieACS e solicita contato com o roteador. A tarefa pode ficar aguardando o próximo Inform; isso não significa que a configuração já foi aplicada. VLAN não será alterada automaticamente.</div>
+    <p class="hint">Configure apenas PPPoE de laboratório e Wi-Fi. O plano abaixo também habilita as interfaces Wi-Fi principal de 2,4 GHz e 5 GHz. A tarefa não altera VLAN, LAN nem os parâmetros do ACS.</p>
+    <div class="card" style="margin:10px 0">${health}</div>
+    ${wanWarning}
+    <div class="two">${fields.join('')}</div>
+    <div class="actions" style="margin-top:14px"><button class="secondary" onclick="previewProvisioning()">Pré-visualizar alterações</button><button class="ok" onclick="sendProvisioning('${esc(acsId)}')">Enviar configuração RESIDENCIAL</button></div>
+    <div id="provisionPreview" class="hint-block" style="display:none;margin-top:12px"></div>
+    <div class="hint-block">O envio cria uma tarefa setParameterValues no GenieACS. Só parâmetros presentes e marcados como graváveis no cache serão enviados. A tarefa aceita pelo ACS não comprova aplicação; confirme o próximo Inform e o estado real do CPE.</div>
   </div>`;
 }
-async function sendProvisioning(acsId) {
+
+function buildProvisioningParameterValues() {
   const pppoeUser = $('prov_pppoeUser')?.value.trim();
   const pppoePass = $('prov_pppoePass')?.value;
   const ssid24 = $('prov_ssid24')?.value.trim();
   const ssid5 = $('prov_ssid5')?.value.trim();
   const wifiPass = $('prov_wifiPass')?.value;
   if (!pppoeUser || !pppoePass || !ssid24 || !ssid5 || !wifiPass) {
-    showStatus('Preencha usuário e senha PPPoE, os dois nomes de Wi-Fi e a senha Wi-Fi.', false); return;
+    throw new Error('Preencha usuário e senha PPPoE, os dois nomes de Wi-Fi e a senha Wi-Fi.');
   }
-  if (wifiPass.length < 8) { showStatus('A senha Wi-Fi precisa ter pelo menos 8 caracteres.', false); return; }
-  const parameterValues = [
+  if (ssid24.length > 32 || ssid5.length > 32) throw new Error('Cada nome de Wi-Fi deve ter no máximo 32 caracteres.');
+  if (wifiPass.length < 8 || wifiPass.length > 63) throw new Error('A senha Wi-Fi precisa ter entre 8 e 63 caracteres.');
+  return [
     ['Device.PPP.Interface.1.Enable', true],
     ['Device.PPP.Interface.1.ConnectionTrigger', 'AlwaysOn'],
     ['Device.PPP.Interface.1.Username', pppoeUser],
     ['Device.PPP.Interface.1.Password', pppoePass],
     ['Device.PPP.Interface.1.MaxMRUSize', 1492],
+    ['Device.WiFi.Radio.1.Enable', true],
+    ['Device.WiFi.SSID.1.Enable', true],
+    ['Device.WiFi.AccessPoint.1.Enable', true],
     ['Device.WiFi.SSID.1.SSID', ssid24],
-    ['Device.WiFi.SSID.3.SSID', ssid5],
     ['Device.WiFi.AccessPoint.1.Security.PreSharedKey', wifiPass],
+    ['Device.WiFi.Radio.2.Enable', true],
+    ['Device.WiFi.SSID.3.Enable', true],
+    ['Device.WiFi.AccessPoint.3.Enable', true],
+    ['Device.WiFi.SSID.3.SSID', ssid5],
     ['Device.WiFi.AccessPoint.3.Security.PreSharedKey', wifiPass]
   ];
+}
+
+function previewProvisioning() {
+  const target = $('provisionPreview');
+  if (!target) return;
+  let parameterValues;
+  try { parameterValues = buildProvisioningParameterValues(); }
+  catch (e) { showStatus(e.message, false); return; }
+  const sensitive = path => /\.Password$|PreSharedKey|Passphrase|Secret/i.test(path);
+  const rows = parameterValues.map(([path, value]) => {
+    const current = currentProvisionValues.find(x => x.path === path);
+    const writable = !!current && current.writable === true;
+    const displayValue = sensitive(path) ? '•••••••• (oculto)' : String(value);
+    const currentValue = !current ? 'ausente no cache' : current.sensitive ? '•••••••• (oculto)' : String(current.value ?? '—');
+    return `<tr><td class="mono">${esc(path)}</td><td>${esc(currentValue)}</td><td>${esc(displayValue)}</td><td>${writable ? 'Sim' : 'Não / não confirmado'}</td></tr>`;
+  }).join('');
+  const noWrite = parameterValues.filter(([path]) => {
+    const p = currentProvisionValues.find(x => x.path === path);
+    return !p || p.writable !== true;
+  });
+  target.style.display = 'block';
+  target.innerHTML = `<h4 style="margin:0 0 8px">Prévia da tarefa — ${parameterValues.length} parâmetros</h4><p class="hint">Nenhuma alteração foi enviada. VLAN, endereço LAN e parâmetros do ACS permanecem fora do plano.</p><div style="overflow:auto"><table><thead><tr><th>Parâmetro</th><th>Atual</th><th>Proposto</th><th>Gravável?</th></tr></thead><tbody>${rows}</tbody></table></div>${noWrite.length ? `<p style="color:#b45309"><b>Envio bloqueado por segurança:</b> ${noWrite.length} parâmetro(s) não aparecem como graváveis no cache atual. Atualize os dados do CPE ou valide os caminhos para este firmware antes de enviar.</p>` : '<p>Todos os caminhos do plano constam como graváveis no cache atual. Revise os valores antes de enviar.</p>'}`;
+}
+
+async function sendProvisioning(acsId) {
+  let parameterValues;
+  try { parameterValues = buildProvisioningParameterValues(); }
+  catch (e) { showStatus(e.message, false); return; }
+  const unsupported = parameterValues.filter(([path]) => {
+    const p = currentProvisionValues.find(x => x.path === path);
+    return !p || p.writable !== true;
+  }).map(([path]) => path);
+  if (unsupported.length) {
+    showStatus(`Envio bloqueado: ${unsupported.length} parâmetro(s) ausente(s) ou sem confirmação de escrita. Clique em Pré-visualizar alterações para ver quais.`, false);
+    previewProvisioning();
+    return;
+  }
+  const current = path => currentProvisionValues.find(x => x.path === path)?.value;
+  const wanPort = String(current('Device.Ethernet.Interface.3.Status') ?? '').toLowerCase();
+  const wanLink = String(current('Device.Ethernet.Link.2.Status') ?? '').toLowerCase();
+  if (wanPort !== 'up' || wanLink !== 'up') {
+    const proceed = window.confirm('O cache atual informa o link WAN como DOWN. Você pode enviar as configurações pelo gerenciamento, mas o PPPoE não conectará enquanto o cabo/link físico estiver inativo. Deseja enfileirar a tarefa mesmo assim?');
+    if (!proceed) return;
+  }
+  const resultPreview = $('provisionPreview');
+  if (resultPreview) resultPreview.style.display = 'none';
   try {
-    const result = await api(`/api/acs/devices/${encodeURIComponent(acsId)}/provision`, { method: 'POST', body: JSON.stringify({ parameterValues }) });
-    showStatus(`Tarefa de provisionamento enviada ao GenieACS (${result.count || parameterValues.length} parâmetros). Aguarde o retorno do MR60X no ACS para confirmar a aplicação.`);
+    const result = await api(`/api/acs/devices/${encodeURIComponent(acsId)}/provision`, {
+      method: 'POST', body: JSON.stringify({ parameterValues })
+    });
+    showStatus(`Tarefa enviada ao GenieACS (${result.count || parameterValues.length} parâmetros). A aplicação ainda precisa ser confirmada pelo próximo Inform.`);
   } catch (e) { showStatus(e.message, false); }
 }
 async function assignProfile(id) { try { await api(`/api/equipment/${id}`, { method: 'PATCH', body: JSON.stringify({ profile_id: $('eProfile').value || null }) }); closeModal(); showStatus('Perfil associado.'); await loadAll(); } catch (e) { showStatus(e.message, false); } }

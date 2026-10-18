@@ -484,6 +484,11 @@
       color: var(--danger);
       font-size: 13px
     }
+  
+    .button-link, .secondary-link { display:inline-flex; align-items:center; justify-content:center; padding:9px 12px; border-radius:8px; text-decoration:none; font-size:13px; font-weight:600; border:1px solid var(--line); }
+    .button-link { background:var(--accent); color:#fff; }
+    .secondary-link { background:transparent; color:var(--text); }
+
   </style>
 </head>
 
@@ -502,7 +507,7 @@
     <div class="toolbar">
       <div>
         <h1 style="margin:0">Central de Equipamentos</h1>
-        <div class="sub">V12.3 — Provisionamento RESIDENCIAL MR60X via GenieACS</div>
+        <div class="sub">V12.3.3 — Catálogo Multi-Fabricante • RFN + GenieACS</div>
       </div>
       <div class="actions"><button onclick="syncACS()">Sincronizar ACS</button><button class="secondary"
           onclick="openEquipmentModal()">+ Equipamento</button><button class="secondary" onclick="openProfileModal()">+
@@ -513,7 +518,8 @@
         class="tab" onclick="showPage('equipment',this)">Equipamentos</button><button class="tab"
         onclick="showPage('profiles',this)">Perfis</button><button class="tab"
         onclick="showPage('isp',this)">Personalização ISP</button><button class="tab"
-        onclick="showPage('acs',this)">GenieACS</button></div>
+        onclick="showPage('acs',this)">GenieACS</button><button class="tab"
+        onclick="showPage('compatibility',this)">Compatibilidade</button></div>
     <section id="page-dashboard" class="page active">
       <div class="grid">
         <div class="card">
@@ -634,6 +640,27 @@
         </table>
       </div>
     </section>
+    <section id="page-compatibility" class="page">
+      <div class="card" style="margin-bottom:14px">
+        <h2 style="margin-top:0">Catálogo de Compatibilidade</h2>
+        <p class="hint">Esta matriz separa duas capacidades diferentes: gerenciamento remoto via ACS/OLT e personalização persistente dos padrões de fábrica. A presença de TR-069 não garante que o bloqueio ou as credenciais do ACS sobrevivam a um reset.</p>
+        <div class="two" style="align-items:end">
+          <div><label for="compatSearch">Filtrar fabricante, modelo ou capacidade</label><input id="compatSearch" placeholder="Ex.: MR60X, Portal Customize, TR-069" oninput="renderCompatibilityCatalog(this.value)"></div>
+          <div class="hint">Catálogo de referência — nenhuma configuração é aplicada automaticamente nesta tela.</div>
+        </div>
+      </div>
+      <div id="compatibilityGrid" class="grid"></div>
+      <div class="card" style="margin-top:14px">
+        <h3 style="margin-top:0">Regra operacional do RFN</h3>
+        <ol class="hint" style="padding-left:22px;line-height:1.7">
+          <li>Identificar fabricante, modelo, revisão de hardware e firmware exatos.</li>
+          <li>Confirmar a ferramenta oficial de personalização de fábrica para essa combinação, quando disponível.</li>
+          <li>Validar o acesso ao ACS/OLT e coletar a árvore de parâmetros antes de habilitar provisionamento específico do modelo.</li>
+          <li>Testar reset em unidade de laboratório, nunca primeiro em equipamento de cliente.</li>
+        </ol>
+        <p class="hint">O catálogo é um registro de compatibilidade e próximas ações; ele não desbloqueia, não altera o firmware e não envia comandos aos CPEs.</p>
+      </div>
+    </section>
   </main>
   <div id="modal" class="modal" onclick="closeModal(event)">
     <div class="modal-box" onclick="event.stopPropagation()">
@@ -653,7 +680,7 @@
     </form>
   </div>
   <script>window.RFN_SUPABASE_URL = "https://fhlwmpeakyxrvnzwyiwv.supabase.co"; window.RFN_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_ehrwtRtHihoUDaJA5iqfhw_CJJ-UodJ";</script>
-  <script src="/app.js?v=16" defer></script>
+  <script src="/app.js?v=17" defer></script>
 </body>
 
 </html>
