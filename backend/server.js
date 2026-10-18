@@ -74,9 +74,29 @@ async function getSupabaseUser(token) {
   return response.json();
 }
 
-async function getProfile(userId) {
-  const result = await pool.query("select id, email, full_name, role from public.profiles where id=$1 limit 1", [userId]);
-  return result.rows[0] || null;
+async function getProfile(userId, token) {
+  const url =
+    `${supabaseUrl}/rest/v1/profiles` +
+    `?id=eq.${encodeURIComponent(userId)}` +
+    `&select=id,email,full_name,role&limit=1`;
+
+  const response = await fetch(url, {
+    headers: {
+      apikey: supabasePublishableKey,
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json"
+    }
+  });
+
+  if (!response.ok) {
+    const details = (await response.text()).slice(0, 200);
+    throw new Error(
+      `Supabase profile lookup failed (${response.status}): ${details}`
+    );
+  }
+
+  const profiles = await response.json();
+  return Array.isArray(profiles) ? profiles[0] || null : null;
 }
 
 async function requireAdminSession(req, res, next) {
@@ -84,7 +104,7 @@ async function requireAdminSession(req, res, next) {
     const token = sessionCookie(req);
     const user = await getSupabaseUser(token);
     if (!user?.id) return res.status(401).json({ error: "Autenticação necessária" });
-    const profile = await getProfile(user.id);
+    const profile = await getProfile(user.id, token);
     if (!profile) return res.status(403).json({ error: "Perfil de acesso não encontrado" });
     if (profile.role !== "admin") return res.status(403).json({ error: "Acesso restrito a administradores" });
     req.authUser = user;
