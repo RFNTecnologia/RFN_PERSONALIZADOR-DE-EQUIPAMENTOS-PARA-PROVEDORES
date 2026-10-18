@@ -1,0 +1,17 @@
+RFN Personalizar Roteadores — V12.3.8 PATCH
+Correção pontual do histórico de provisionamento.
+
+IMPORTANTE: este patch modifica somente o bloco SQL do histórico em backend/server.js. Ele preserva o restante do arquivo e cria uma cópia de segurança antes de salvar.
+
+COMO APLICAR
+1. Extraia o conteúdo deste ZIP na pasta principal do projeto RFN_Personalizar-roteadores (a mesma onde fica docker-compose.yml).
+2. Abra o PowerShell nessa pasta e execute:
+   .\Aplicar-Correcao-Historico.ps1
+3. Se aparecer uma mensagem de bloqueio por política de execução, execute apenas esta sessão:
+   powershell -ExecutionPolicy Bypass -File .\Aplicar-Correcao-Historico.ps1
+4. Se o script confirmar que a correção foi aplicada, execute:
+   docker compose up -d --build api nginx
+5. Atualize a página do RFN e abra novamente o histórico do MR60X.
+
+Não substitua .env, não execute migrations e não altere a configuração do roteador.
+Se o script disser que não encontrou o bloco esperado, pare e envie a mensagem; ele não terá alterado o arquivo.
