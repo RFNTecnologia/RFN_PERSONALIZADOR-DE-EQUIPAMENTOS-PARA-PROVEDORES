@@ -116,7 +116,14 @@ app.post("/api/auth/logout", (_req, res) => {
 });
 
 app.use("/api", (req, res, next) => {
-  if (req.path.startsWith("/auth/")) return next();
+  // Somente login e logout ficam fora da verificação global.
+  if (
+    req.path === "/auth/login" ||
+    req.path === "/auth/logout"
+  ) {
+    return next();
+  }
+
   return requireAdminSession(req, res, next);
 });
 
