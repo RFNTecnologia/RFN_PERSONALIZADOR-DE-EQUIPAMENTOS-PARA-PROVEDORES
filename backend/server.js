@@ -701,10 +701,10 @@ async function reconcileProvisioningActivations(deviceId, device) {
       `update provisioning_activations
           set status=$1, status_note=$2, observed_summary=$3::jsonb,
               last_observed_at=now(),
-              confirmed_at=case when $1='confirmed' then coalesce(confirmed_at, now()) else null end,
+              confirmed_at=case when $5::boolean then coalesce(confirmed_at, now()) else null end,
               updated_at=now()
         where id=$4`,
-      [status, note, JSON.stringify({ ...snapshot, mismatchedPaths: mismatches }), operation.id]
+      [status, note, JSON.stringify({ ...snapshot, mismatchedPaths: mismatches }), operation.id, confirmed]
     );
     if (confirmed && operation.equipment_id && operation.profile_id) {
       await pool.query("update equipment set profile_id=$1 where id=$2", [operation.profile_id, operation.equipment_id]);
