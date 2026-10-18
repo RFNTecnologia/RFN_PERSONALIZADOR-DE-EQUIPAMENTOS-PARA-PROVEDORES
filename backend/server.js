@@ -19,7 +19,7 @@ if (!supabaseUrl || !supabasePublishableKey) {
   throw new Error("Configure SUPABASE_URL e SUPABASE_PUBLISHABLE_KEY para usar Supabase Auth");
 }
 if (!databaseUrl) {
-  throw new Error("DATABASE_URL deve apontar para o PostgreSQL do Supabase");
+  throw new Error("Configure DATABASE_URL para o PostgreSQL operacional usado pelo RFN");
 }
 const pool = new Pool({ connectionString: databaseUrl });
 const genieAcsNbiUrl = process.env.GENIEACS_NBI_URL || "http://genieacs:7557";
@@ -75,26 +75,20 @@ async function getSupabaseUser(token) {
 }
 
 async function getProfile(userId, token) {
-  const url =
-    `${supabaseUrl}/rest/v1/profiles` +
-    `?id=eq.${encodeURIComponent(userId)}` +
-    `&select=id,email,full_name,role&limit=1`;
-
+  // Profiles live in the same Supabase project used for Auth. Use the user's
+  // access token so the profiles_select_own RLS policy remains in force.
+  const url = `${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}&select=id,email,full_name,role&limit=1`;
   const response = await fetch(url, {
     headers: {
       apikey: supabasePublishableKey,
       Authorization: `Bearer ${token}`,
-      Accept: "application/json"
-    }
+      Accept: "application/json",
+    },
   });
-
   if (!response.ok) {
     const details = (await response.text()).slice(0, 200);
-    throw new Error(
-      `Supabase profile lookup failed (${response.status}): ${details}`
-    );
+    throw new Error(`Supabase profile lookup failed (${response.status}): ${details}`);
   }
-
   const profiles = await response.json();
   return Array.isArray(profiles) ? profiles[0] || null : null;
 }
@@ -136,18 +130,14 @@ app.post("/api/auth/logout", (_req, res) => {
 });
 
 app.use("/api", (req, res, next) => {
-  // Somente login e logout ficam fora da verificação global.
-  if (
-    req.path === "/auth/login" ||
-    req.path === "/auth/logout"
-  ) {
-    return next();
-  }
-
+  if (req.path.startsWith("/auth/")) return next();
   return requireAdminSession(req, res, next);
 });
 
-app.get("/api/auth/me", (req, res) => {
+// The global /api middleware intentionally skips /auth/* routes so login/logout
+// can work before a session exists. The identity endpoint must enforce the admin
+// session explicitly because Nginx uses it as auth_request for /genieacs/.
+app.get("/api/auth/me", requireAdminSession, (req, res) => {
   res.json({ authenticated: true, user: { id: req.authUser.id, email: req.authUser.email }, profile: req.authProfile });
 });
 

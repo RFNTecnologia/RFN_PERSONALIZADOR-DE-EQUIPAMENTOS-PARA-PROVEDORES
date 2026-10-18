@@ -24,28 +24,31 @@ Stack inicial:
 
 ## Configuração inicial
 
- No PowerShell, copie o modelo e prepare a configuração local:
- 
- ```powershell
- Copy-Item .env.example .env
- ./scripts/bootstrap-local.ps1
-```
-
-O bootstrap preserva o `.env`, reutiliza a URI da API local anterior quando disponível e gera as credenciais administrativas ausentes sem mostrá-las. Confira `API_ADMIN_PASSWORD` no `.env` para entrar no painel. Para outro banco, preencha `DATABASE_URL` ou `SUPABASE_DB_URL` antes de executar. Uma URI Supabase pode usar Session pooler quando a conexão direta não funcionar; codifique caracteres especiais conforme as regras de URI.
-
-Na primeira inicialização, a API aplica os arquivos SQL de `backend/migrations`. As migrations precisam continuar idempotentes porque são verificadas a cada inicialização. A chave secreta da API do Supabase não é a senha PostgreSQL; não coloque chaves de serviço no frontend.
-
-Valide e inicie o ambiente de desenvolvimento:
+No PowerShell do VS Code, na raiz do projeto:
 
 ```powershell
-docker compose config
-docker compose build
-docker compose up -d
-docker compose ps
-docker compose logs -f genieacs api nginx
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+notepad .env
 ```
 
-O painel solicita o usuário e a senha configurados em `API_ADMIN_USERNAME` e `API_ADMIN_PASSWORD`. Entre primeiro no painel para abrir a interface `/genieacs/`; ambas exigem a mesma sessão. Há um usuário administrativo único; não há perfis ou contas individuais nesta fase.
+Confirme que `SUPABASE_URL` e `SUPABASE_PUBLISHABLE_KEY` correspondem ao projeto RFN. Antes de continuar, preencha `DATABASE_URL` com a URI PostgreSQL do projeto Supabase obtida em Dashboard → Connect → Session pooler. Não use a publishable key como senha do banco. O aplicativo usa essa conexão tanto para as tabelas operacionais quanto para ler `public.profiles`; as migrations criam as tabelas operacionais no Supabase. Dados que estavam somente no PostgreSQL local antigo não são copiados automaticamente.
+
+Depois, gere os segredos ausentes e valide a configuração:
+
+```powershell
+.\scripts\bootstrap-local.ps1
+docker compose config -q
+```
+
+Inicie os serviços:
+
+```powershell
+docker compose up -d --build
+docker compose ps
+docker compose logs --tail 100 api nginx genieacs
+```
+
+No Supabase Dashboard, crie um usuário em Authentication → Users e depois promova o perfil para `role = 'admin'` usando a instrução em `SETUP_SUPABASE_AUTH.md`. Acesse `http://localhost/` e entre com esse e-mail e senha. A rota `/genieacs/` exige uma sessão administrativa válida.
 
 ## Produção com HTTPS
 
