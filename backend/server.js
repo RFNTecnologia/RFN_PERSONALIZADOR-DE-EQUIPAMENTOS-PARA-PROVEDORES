@@ -292,18 +292,71 @@ app.post("/api/equipment", async (req, res, next) => {
 });
 
 app.patch("/api/equipment/:id", async (req, res, next) => {
+  const body = req.body || {};
+  const hasProfile = Object.prototype.hasOwnProperty.call(body, "profile_id");
+  const hasCustomer = Object.prototype.hasOwnProperty.call(body, "customer_id");
+  const hasStatus = Object.prototype.hasOwnProperty.call(body, "status");
+  if (!hasProfile && !hasCustomer && !hasStatus) {
+    return res.status(400).json({ error: "Informe ao menos um campo para atualizar." });
+  }
+  const equipmentId = Number(req.params.id);
+  if (!Number.isSafeInteger(equipmentId) || equipmentId <= 0) {
+    return res.status(400).json({ error: "ID de equipamento inválido." });
+  }
+  const parseNullableId = (value, label) => {
+    if (value === null || value === "" || value === undefined) return null;
+    const id = Number(value);
+    if (!Number.isSafeInteger(id) || id <= 0) throw new Error(`${label} inválido.`);
+    return id;
+  };
+  let profileId = null;
+  let customerId = null;
   try {
-    const { profile_id, customer_id, status } = req.body;
-    const q = await pool.query(`
-      update equipment set
-        profile_id=coalesce($1, profile_id),
-        customer_id=coalesce($2, customer_id),
-        status=coalesce($3, status)
-      where id=$4 returning *
-    `, [profile_id ?? null, customer_id ?? null, status ?? null, req.params.id]);
-    if (!q.rowCount) return res.status(404).json({ error: "Equipamento não encontrado" });
+    if (hasProfile) profileId = parseNullableId(body.profile_id, "Perfil");
+    if (hasCustomer) customerId = parseNullableId(body.customer_id, "Cliente");
+  } catch (e) {
+    return res.status(400).json({ error: e.message });
+  }
+  if (hasStatus && (typeof body.status !== "string" || !["online", "offline", "unknown"].includes(body.status))) {
+    return res.status(400).json({ error: "Status de equipamento inválido." });
+  }
+
+  const setParts = [];
+  const values = [];
+  if (hasProfile) { values.push(profileId); setParts.push(`profile_id=$${values.length}`); }
+  if (hasCustomer) { values.push(customerId); setParts.push(`customer_id=$${values.length}`); }
+  if (hasStatus) { values.push(body.status); setParts.push(`status=$${values.length}`); }
+  values.push(equipmentId);
+
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const q = await client.query(
+      `update equipment set ${setParts.join(", ")} where id=$${values.length}
+       returning id, customer_id, profile_id, acs_device_id`, values
+    );
+    if (!q.rowCount) {
+      await client.query("rollback");
+      return res.status(404).json({ error: "Equipamento não encontrado" });
+    }
+    // When a customer is first linked to this CPE, attach the formerly unassigned
+    // activation records to the same customer. Existing explicit historical links stay intact.
+    if (hasCustomer && customerId !== null) {
+      await client.query(
+        `update provisioning_activations
+            set customer_id=$1
+          where equipment_id=$2 and customer_id is null`,
+        [customerId, equipmentId]
+      );
+    }
+    await client.query("commit");
     res.json(q.rows[0]);
-  } catch (e) { next(e); }
+  } catch (e) {
+    try { await client.query("rollback"); } catch { /* Preserve original database error. */ }
+    next(e);
+  } finally {
+    client.release();
+  }
 });
 
 app.get("/api/profiles", async (_req, res, next) => {
@@ -802,6 +855,9 @@ app.post("/api/acs/devices/:deviceId/provision", async (req, res) => {
     const safeExpectedValues = Object.fromEntries(cleanPairs.filter(([pathValue]) => !MR60X_SENSITIVE_PATHS.has(pathValue)));
     const sensitivePaths = cleanPairs.filter(([pathValue]) => MR60X_SENSITIVE_PATHS.has(pathValue)).map(([pathValue]) => pathValue);
     const equipmentRow = await pool.query("select id, customer_id, profile_id from equipment where acs_device_id=$1 limit 1", [deviceId]);
+    if (operationMode === "customer" && !equipmentRow.rows[0]?.customer_id) {
+      return res.status(409).json({ error: "Antes da ativação de cliente final, cadastre o cliente e associe-o ao equipamento em Equipamentos → Abrir → Cliente responsável." });
+    }
     const residentialProfile = await pool.query("select id, name from equipment_profiles where name='RESIDENCIAL' limit 1");
     const created = await pool.query(
       `insert into provisioning_activations

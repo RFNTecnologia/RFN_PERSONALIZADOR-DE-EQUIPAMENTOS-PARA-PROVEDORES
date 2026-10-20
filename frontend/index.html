@@ -507,21 +507,24 @@
     <div class="toolbar">
       <div>
         <h1 style="margin:0">Central de Equipamentos</h1>
-        <div class="sub">V12.3.3 — Catálogo Multi-Fabricante • RFN + GenieACS</div>
+        <div class="sub">V12.3.9 — Cadastro de Clientes • Associação CPE • Histórico</div>
       </div>
       <div class="actions"><button onclick="syncACS()">Sincronizar ACS</button><button class="secondary"
-          onclick="openEquipmentModal()">+ Equipamento</button><button class="secondary" onclick="openProfileModal()">+
-          Perfil</button></div>
+          onclick="openCustomerModal()">+ Cliente</button><button class="secondary" onclick="openEquipmentModal()">+ Equipamento</button><button class="secondary" onclick="openProfileModal()">+ Perfil</button></div>
     </div>
     <div id="status" class="status"></div>
     <div class="tabs"><button class="tab active" onclick="showPage('dashboard',this)">Dashboard</button><button
-        class="tab" onclick="showPage('equipment',this)">Equipamentos</button><button class="tab"
+        class="tab" onclick="showPage('equipment',this)">Equipamentos</button><button class="tab" onclick="showPage('customers',this)">Clientes</button><button class="tab"
         onclick="showPage('profiles',this)">Perfis</button><button class="tab"
         onclick="showPage('isp',this)">Personalização ISP</button><button class="tab"
         onclick="showPage('acs',this)">GenieACS</button><button class="tab"
         onclick="showPage('compatibility',this)">Compatibilidade</button></div>
     <section id="page-dashboard" class="page active">
       <div class="grid">
+        <div class="card">
+          <div class="title">Clientes</div>
+          <div id="cCustomers" class="num">-</div>
+        </div>
         <div class="card">
           <div class="title">Equipamentos</div>
           <div id="cEquipment" class="num">-</div>
@@ -560,6 +563,17 @@
           </thead>
           <tbody id="equipmentTable"></tbody>
         </table>
+      </div>
+    </section>
+    <section id="page-customers" class="page">
+      <div class="card" style="margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+          <div><h2 style="margin:0">Cadastro de clientes</h2><p class="hint" style="margin-bottom:0">O cliente precisa estar cadastrado e associado ao CPE antes de registrar uma ativação definitiva.</p></div>
+          <button onclick="openCustomerModal()">+ Novo cliente</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table><thead><tr><th>Nome / Razão social</th><th>CPF / CNPJ</th><th>Telefone</th><th>Endereço</th><th>Status</th></tr></thead><tbody id="customersTable"></tbody></table>
       </div>
     </section>
     <section id="page-profiles" class="page">
@@ -680,7 +694,7 @@
     </form>
   </div>
   <script>window.RFN_SUPABASE_URL = "https://fhlwmpeakyxrvnzwyiwv.supabase.co"; window.RFN_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_ehrwtRtHihoUDaJA5iqfhw_CJJ-UodJ";</script>
-  <script src="/app.js?v=17" defer></script>
+  <script src="/app.js?v=16" defer></script>
 </body>
 
 </html>

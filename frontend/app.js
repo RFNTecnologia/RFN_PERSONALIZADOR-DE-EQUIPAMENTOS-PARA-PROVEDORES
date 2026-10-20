@@ -1,6 +1,6 @@
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]));
-let equipment = [], profiles = [], acs = [], providerSettings = null;
+let equipment = [], customers = [], profiles = [], acs = [], providerSettings = null;
 let currentProvisionValues = [];
 let currentDeviceModal = { id: null, acsId: '', tab: 'info' };
 
@@ -15,6 +15,7 @@ function showPage(name, btn) {
   document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
   btn?.classList.add('active');
   if (name === 'equipment') renderEquipment();
+  if (name === 'customers') renderCustomers();
   if (name === 'profiles') renderProfiles();
   if (name === 'isp') loadProviderSettings();
   if (name === 'acs') loadACS();
@@ -121,18 +122,41 @@ $('loginForm').addEventListener('submit', async event => {
 
 async function loadAll() {
   try {
-    const [d, e, p, s] = await Promise.all([api('/api/dashboard'), api('/api/equipment'), api('/api/profiles'), api('/api/provider-settings')]);
-    equipment = e; profiles = p; providerSettings = s; renderProviderSettings();
+    const [d, e, c, p, s] = await Promise.all([api('/api/dashboard'), api('/api/equipment'), api('/api/customers'), api('/api/profiles'), api('/api/provider-settings')]);
+    equipment = e; customers = c; profiles = p; providerSettings = s; renderProviderSettings();
+    $('cCustomers').textContent = d.customers ?? customers.length;
     $('cEquipment').textContent = d.equipment;
     $('cOnline').textContent = d.online_equipment;
     $('cProfiles').textContent = d.profiles;
-    renderEquipment(); renderProfiles(); checkACS();
+    renderEquipment(); renderCustomers(); renderProfiles(); checkACS();
   } catch (e) { showStatus(e.message, false); }
 }
 function renderEquipment() {
   const tb = $('equipmentTable');
   if (!equipment.length) { tb.innerHTML = '<tr><td colspan="9" class="empty">Nenhum equipamento cadastrado.</td></tr>'; return; }
   tb.innerHTML = equipment.map(x => `<tr><td>${esc(x.manufacturer)}</td><td>${esc(x.model)}</td><td>${esc(x.equipment_type)}</td><td class="mono">${esc(x.serial_number)}</td><td class="mono">${esc(x.mac || '-')}</td><td>${esc(x.customer_name || '-')}</td><td>${esc(x.profile_name || 'Sem perfil')}</td><td><span class="badge ${x.status === 'online' ? 'online' : 'unknown'}">${esc(x.status)}</span></td><td><button class="secondary" onclick="equipmentActions(${x.id},'${esc(x.acs_device_id || '')}')">Abrir</button></td></tr>`).join('');
+}
+function renderCustomers() {
+  const tb = $('customersTable');
+  if (!tb) return;
+  if (!customers.length) {
+    tb.innerHTML = '<tr><td colspan="5" class="empty">Nenhum cliente cadastrado. Clique em + Cliente para criar o primeiro cadastro.</td></tr>';
+    return;
+  }
+  tb.innerHTML = customers.map(c => `<tr><td>${esc(c.name)}</td><td class="mono">${esc(c.document || '—')}</td><td>${esc(c.phone || '—')}</td><td>${esc(c.address || '—')}</td><td><span class="badge online">Cadastro ativo</span></td></tr>`).join('');
+}
+function openCustomerModal() {
+  openModal(`<h2>Novo cliente</h2><p class="hint">Cadastre o titular antes de associar o equipamento e fazer a ativação definitiva.</p><div class="form"><div><label>Nome completo / Razão social *</label><input id="cName" required maxlength="180" autocomplete="name"></div><div class="two"><div><label>CPF / CNPJ</label><input id="cDocument" maxlength="40"></div><div><label>Telefone</label><input id="cPhone" maxlength="50" autocomplete="tel"></div></div><div><label>Endereço</label><input id="cAddress" maxlength="300" autocomplete="street-address"></div><div class="actions"><button onclick="saveCustomer()">Salvar cliente</button><button class="secondary" onclick="closeModal()">Cancelar</button></div></div>`);
+  $('cName')?.focus();
+}
+async function saveCustomer() {
+  try {
+    const name = $('cName')?.value.trim();
+    if (!name) throw new Error('Informe o nome do cliente.');
+    await api('/api/customers', { method: 'POST', body: JSON.stringify({ name, document: $('cDocument')?.value.trim(), phone: $('cPhone')?.value.trim(), address: $('cAddress')?.value.trim() }) });
+    closeModal(); await loadAll(); showPage('customers', document.querySelector('.tabs .tab[onclick*="customers"]'));
+    showStatus('Cliente cadastrado. Agora associe-o ao equipamento em Equipamentos → Abrir.');
+  } catch (e) { showStatus(e.message, false); }
 }
 function renderProfiles() {
   const g = $('profilesGrid');
@@ -302,9 +326,10 @@ async function saveProfile(id) { try { let config; try { config = JSON.parse($('
 function equipmentActions(id, acsId) {
   const e = equipment.find(x => String(x.id) === String(id)); if (!e) { showStatus('Equipamento não encontrado na lista.', false); return; }
   const options = profiles.map(p => `<option value="${p.id}" ${String(p.id) === String(e.profile_id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+  const customerOptions = `<option value="">Sem cliente associado</option>${customers.map(c => `<option value="${c.id}" ${String(c.id) === String(e.customer_id) ? 'selected' : ''}>${esc(c.name)}${c.document ? ` — ${esc(c.document)}` : ''}</option>`).join('')}`;
   const identity = `<div class="device-head"><div><h2 style="margin:0">${esc(e.manufacturer)} ${esc(e.model)}</h2><div class="hint">Serial <span class="mono">${esc(e.serial_number)}</span></div></div><span class="badge ${e.status === 'online' ? 'online' : 'unknown'}">${esc(e.status)}</span></div>`;
   currentDeviceModal = { id, acsId: acsId || '', tab: 'info' };
-  openModal(`${identity}<p class="hint">ACS ID: <span class="mono">${esc(acsId || 'não vinculado')}</span></p><div id="deviceOperationalSummary"><div class="card" style="margin-top:10px"><div class="hint">Carregando estado operacional do GenieACS...</div></div></div><div class="device-tabs"><button class="device-tab active" onclick="showDeviceTab('info',this,${id},'${esc(acsId || '')}')">Informações</button><button class="device-tab" onclick="showDeviceTab('params',this,${id},'${esc(acsId || '')}')">Parâmetros</button><button class="device-tab" onclick="showDeviceTab('wifi',this,${id},'${esc(acsId || '')}')">Wi-Fi</button><button class="device-tab" onclick="showDeviceTab('wan',this,${id},'${esc(acsId || '')}')">WAN</button><button class="device-tab" onclick="showDeviceTab('tr069',this,${id},'${esc(acsId || '')}')">TR-069</button><button class="device-tab" onclick="showDeviceTab('provision',this,${id},'${esc(acsId || '')}')">Provisionamento</button><button class="device-tab" onclick="showDeviceTab('lab',this,${id},'${esc(acsId || '')}')">Laboratório MR60X</button></div><div id="deviceTabBody"><div class="card"><div class="hint">Carregando dados do equipamento...</div></div></div><div class="device-actions"><div><label>Perfil</label><select id="eProfile"><option value="">Sem perfil</option>${options}</select></div><div class="actions"><button onclick="assignProfile(${id})">Associar perfil</button>${acsId ? `<button class="ok" onclick="applyProfile('${esc(acsId)}')">Aplicar perfil</button><button class="secondary" onclick="refreshDevice('${esc(acsId)}')">Atualizar do CPE</button>` : ''}</div></div>`);
+  openModal(`${identity}<p class="hint">ACS ID: <span class="mono">${esc(acsId || 'não vinculado')}</span></p><div id="deviceOperationalSummary"><div class="card" style="margin-top:10px"><div class="hint">Carregando estado operacional do GenieACS...</div></div></div><div class="device-tabs"><button class="device-tab active" onclick="showDeviceTab('info',this,${id},'${esc(acsId || '')}')">Informações</button><button class="device-tab" onclick="showDeviceTab('params',this,${id},'${esc(acsId || '')}')">Parâmetros</button><button class="device-tab" onclick="showDeviceTab('wifi',this,${id},'${esc(acsId || '')}')">Wi-Fi</button><button class="device-tab" onclick="showDeviceTab('wan',this,${id},'${esc(acsId || '')}')">WAN</button><button class="device-tab" onclick="showDeviceTab('tr069',this,${id},'${esc(acsId || '')}')">TR-069</button><button class="device-tab" onclick="showDeviceTab('provision',this,${id},'${esc(acsId || '')}')">Provisionamento</button><button class="device-tab" onclick="showDeviceTab('lab',this,${id},'${esc(acsId || '')}')">Laboratório MR60X</button></div><div id="deviceTabBody"><div class="card"><div class="hint">Carregando dados do equipamento...</div></div></div><div class="device-actions"><div><label>Cliente responsável</label><select id="eCustomer">${customerOptions}</select><div class="hint">Vincula o cadastro e atualiza as ativações antigas ainda sem cliente.</div></div><div><label>Perfil</label><select id="eProfile"><option value="">Sem perfil</option>${options}</select></div><div class="actions" style="grid-column:1/-1"><button onclick="assignCustomer(${id})">Associar cliente</button><button onclick="assignProfile(${id})">Associar perfil</button>${acsId ? `<button class="ok" onclick="applyProfile('${esc(acsId)}')">Aplicar perfil</button><button class="secondary" onclick="refreshDevice('${esc(acsId)}')">Atualizar do CPE</button>` : ''}</div></div>`);
   if (acsId) {
     loadDeviceParameters(id, acsId, 'info');
   } else showDeviceEmpty('Este equipamento não está vinculado a um dispositivo do GenieACS.');
@@ -728,6 +753,15 @@ async function loadProvisioningHistory(acsId) {
   } catch (e) {
     host.innerHTML = `<div class="card"><h3>Histórico de provisionamento</h3><p class="hint">${esc(e.message || 'Não foi possível consultar o histórico.')}</p><button class="secondary" onclick="loadProvisioningHistory('${esc(acsId)}')">Tentar novamente</button></div>`;
   }
+}
+async function assignCustomer(id) {
+  try {
+    const value = $('eCustomer')?.value || null;
+    if (value && !customers.some(c => String(c.id) === String(value))) throw new Error('Selecione um cliente cadastrado.');
+    await api(`/api/equipment/${id}`, { method: 'PATCH', body: JSON.stringify({ customer_id: value ? Number(value) : null }) });
+    closeModal(); await loadAll();
+    showStatus(value ? 'Cliente associado ao equipamento; histórico sem vínculo atualizado.' : 'Associação de cliente removida do equipamento.');
+  } catch (e) { showStatus(e.message, false); }
 }
 async function assignProfile(id) { try { await api(`/api/equipment/${id}`, { method: 'PATCH', body: JSON.stringify({ profile_id: $('eProfile').value || null }) }); closeModal(); showStatus('Perfil associado.'); await loadAll(); } catch (e) { showStatus(e.message, false); } }
 async function applyProfile(acsId) { try { const e = equipment.find(x => x.acs_device_id === acsId); if (!e?.profile_id) throw new Error('Associe um perfil antes de aplicar.'); await api(`/api/acs/devices/${encodeURIComponent(acsId)}/apply-profile`, { method: 'POST', body: JSON.stringify({ profile_id: e.profile_id }) }); showStatus('Perfil enviado ao GenieACS/CPE.'); } catch (e) { showStatus(e.message, false); } }
