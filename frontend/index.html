@@ -489,6 +489,11 @@
     .button-link { background:var(--accent); color:#fff; }
     .secondary-link { background:transparent; color:var(--text); }
 
+    .ops-alerts { margin: 14px 0; }
+    .ops-alert { display:flex; gap:12px; align-items:center; }
+    .ops-alert-count { font-size:28px; font-weight:800; color:var(--warn); min-width:30px; }
+    .ops-toolbar { margin:14px 0 10px; }
+    @media(max-width:720px) { .ops-toolbar input { min-width:100% !important; } }
   </style>
 </head>
 
@@ -507,7 +512,7 @@
     <div class="toolbar">
       <div>
         <h1 style="margin:0">Central de Equipamentos</h1>
-        <div class="sub">V12.4.0 — Ativação por Cliente • Validação PPPoE</div>
+        <div class="sub">V12.5.0 — Painel Operacional do Técnico</div>
       </div>
       <div class="actions"><button onclick="syncACS()">Sincronizar ACS</button><button class="secondary"
           onclick="openCustomerModal()">+ Cliente</button><button class="secondary" onclick="openEquipmentModal()">+ Equipamento</button><button class="secondary" onclick="openProfileModal()">+ Perfil</button></div>
@@ -539,11 +544,12 @@
         </div>
       </div>
       <div class="card" style="margin-top:16px">
-        <h2>Próxima etapa</h2>
-        <p class="hint">Cadastre um CPE ou sincronize um CPE que já tenha feito Inform no GenieACS. Depois, abra o
-          equipamento e associe um perfil. Os parâmetros TR-069 reais serão inseridos no perfil após coletarmos a árvore
-          de parâmetros do modelo.</p>
+        <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap">
+          <div><h2 style="margin:0">Painel operacional do técnico</h2><p class="hint" style="margin-bottom:0">Pendências de cadastro e atalhos para atendimento. A leitura ao vivo de WAN/PPPoE continua dentro de cada equipamento.</p></div>
+          <div class="actions"><button onclick="showPage('customers',document.querySelector('.tabs .tab[onclick*=\"customers\"]'))">Clientes</button><button class="secondary" onclick="showPage('equipment',document.querySelector('.tabs .tab[onclick*=\"equipment\"]'))">Inventário</button></div>
+        </div>
       </div>
+      <div class="toolbar ops-toolbar" style="margin-top:14px"><div><h3 style="margin:0">Fila operacional</h3><div class="hint">Estado cadastral do inventário. WAN/PPPoE ao vivo é consultado ao abrir cada equipamento.</div></div><div class="actions"><input id="operationsSearch" placeholder="Buscar cliente, modelo ou serial" oninput="renderOperationsDashboard()" style="min-width:240px"><button class="secondary" onclick="refreshOperationsDashboard()">Atualizar painel</button></div></div><div id="operationsDashboard"><div class="card"><p class="hint">Carregando fila operacional...</p></div></div>
     </section>
     <section id="page-equipment" class="page">
       <div class="table-wrap">

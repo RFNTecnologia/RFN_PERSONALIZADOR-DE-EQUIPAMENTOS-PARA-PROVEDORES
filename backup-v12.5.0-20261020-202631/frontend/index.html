@@ -1,0 +1,700 @@
+<!doctype html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>RFN_Personalizar-roteadores — Central do Provedor</title>
+  <style>
+    :root {
+      --bg: #0b1220;
+      --panel: #111a2b;
+      --panel2: #18243a;
+      --line: #263650;
+      --text: #e8eef7;
+      --muted: #93a4bd;
+      --accent: #3b82f6;
+      --ok: #22c55e;
+      --warn: #f59e0b;
+      --danger: #ef4444
+    }
+
+    * {
+      box-sizing: border-box
+    }
+
+    body {
+      margin: 0;
+      font-family: Inter, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text)
+    }
+
+    header {
+      height: 72px;
+      padding: 0 26px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--line);
+      background: #0d1627;
+      position: sticky;
+      top: 0;
+      z-index: 5
+    }
+
+    .brand {
+      font-size: 20px;
+      font-weight: 800
+    }
+
+    .sub {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 3px
+    }
+
+    main {
+      max-width: 1400px;
+      margin: auto;
+      padding: 24px
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 18px
+    }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap
+    }
+
+    button {
+      border: 0;
+      border-radius: 8px;
+      padding: 10px 14px;
+      cursor: pointer;
+      background: var(--accent);
+      color: white;
+      font-weight: 700
+    }
+
+    button.secondary {
+      background: #263650
+    }
+
+    button.ok {
+      background: #15803d
+    }
+
+    button.danger {
+      background: #b91c1c
+    }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 18px
+    }
+
+    .tab {
+      background: transparent;
+      border-radius: 8px 8px 0 0;
+      color: var(--muted)
+    }
+
+    .tab.active {
+      background: var(--panel2);
+      color: #fff
+    }
+
+    .page {
+      display: none
+    }
+
+    .page.active {
+      display: block
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 14px
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 18px
+    }
+
+    .title {
+      font-size: 13px;
+      color: var(--muted)
+    }
+
+    .num {
+      font-size: 30px;
+      font-weight: 800;
+      margin-top: 8px
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse
+    }
+
+    .table-wrap {
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel)
+    }
+
+    th,
+    td {
+      padding: 12px;
+      text-align: left;
+      border-bottom: 1px solid var(--line);
+      white-space: nowrap
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase
+    }
+
+    tr:last-child td {
+      border-bottom: 0
+    }
+
+    .badge {
+      padding: 5px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800
+    }
+
+    .online {
+      background: #14532d;
+      color: #86efac
+    }
+
+    .unknown {
+      background: #3f3f46;
+      color: #d4d4d8
+    }
+
+    input,
+    textarea,
+    select {
+      width: 100%;
+      padding: 10px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: #0d1627;
+      color: var(--text)
+    }
+
+    label {
+      font-size: 12px;
+      color: var(--muted);
+      display: block;
+      margin-bottom: 6px
+    }
+
+    .form {
+      display: grid;
+      gap: 12px
+    }
+
+    .two {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px
+    }
+
+    .modal {
+      position: fixed;
+      inset: 0;
+      background: #0008;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      z-index: 10
+    }
+
+    .modal.open {
+      display: flex
+    }
+
+    .modal-box {
+      width: min(760px, 100%);
+      max-height: 90vh;
+      overflow: auto;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 20px
+    }
+
+    .hint {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.5
+    }
+
+    .mono {
+      font-family: ui-monospace, monospace
+    }
+
+    .status {
+      margin-bottom: 14px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      display: none
+    }
+
+    .status.show {
+      display: block
+    }
+
+    .status.ok {
+      background: #052e16;
+      color: #86efac
+    }
+
+    .status.err {
+      background: #450a0a;
+      color: #fca5a5
+    }
+
+    .profile-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 14px
+    }
+
+    .kv {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 8px 0;
+      font-size: 13px
+    }
+
+    .empty {
+      padding: 30px;
+      text-align: center;
+      color: var(--muted)
+    }
+
+    .param-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-bottom: 12px
+    }
+
+    .param-search-wrap {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      min-width: min(100%, 560px);
+      flex: 1;
+      justify-content: flex-end
+    }
+
+    .param-search {
+      min-width: 220px;
+      max-width: 520px
+    }
+
+    .param-clear {
+      white-space: nowrap
+    }
+
+    .param-filter-empty {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      margin-top: 10px
+    }
+
+    .param-count {
+      font-weight: 700;
+      color: var(--text)
+    }
+
+    .device-tabs {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin: 14px 0;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 8px
+    }
+
+    .device-tab {
+      background: #18243a;
+      color: var(--muted)
+    }
+
+    .device-tab.active {
+      background: var(--accent);
+      color: #fff
+    }
+
+    .device-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px
+    }
+
+    .device-actions {
+      display: grid;
+      grid-template-columns: minmax(180px, 260px) 1fr;
+      gap: 12px;
+      align-items: end;
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px solid var(--line)
+    }
+
+    .param-list {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      overflow: hidden
+    }
+
+    .param-row {
+      display: grid;
+      grid-template-columns: minmax(320px, 1.6fr) minmax(180px, 1fr);
+      gap: 12px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      background: #0d1627
+    }
+
+    .param-row:last-child {
+      border-bottom: 0
+    }
+
+    .param-path {
+      font-size: 11px;
+      color: #b8c7dc;
+      word-break: break-all
+    }
+
+    .param-value {
+      font-size: 13px;
+      word-break: break-word
+    }
+
+    .big-value {
+      font-size: 18px;
+      font-weight: 800;
+      margin-top: 6px;
+      word-break: break-word
+    }
+
+    .hint-block {
+      margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: #18243a;
+      color: var(--muted);
+      font-size: 12px
+    }
+
+    @media(max-width:720px) {
+      .device-actions {
+        grid-template-columns: 1fr
+      }
+
+      .param-row {
+        grid-template-columns: 1fr
+      }
+    }
+
+    @media(max-width:720px) {
+      .two {
+        grid-template-columns: 1fr
+      }
+
+      header {
+        padding: 0 14px
+      }
+
+      main {
+        padding: 14px
+      }
+    }
+
+    .login-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+      background: rgba(3, 8, 16, .88)
+    }
+
+    .login-overlay.open {
+      display: flex
+    }
+
+    .login-box {
+      width: min(100%, 390px);
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel)
+    }
+
+    .login-box h2 {
+      margin-top: 0
+    }
+
+    .login-box label {
+      display: block;
+      margin: 12px 0 6px
+    }
+
+    .login-box input {
+      width: 100%
+    }
+
+    .login-error {
+      min-height: 22px;
+      color: var(--danger);
+      font-size: 13px
+    }
+  
+    .button-link, .secondary-link { display:inline-flex; align-items:center; justify-content:center; padding:9px 12px; border-radius:8px; text-decoration:none; font-size:13px; font-weight:600; border:1px solid var(--line); }
+    .button-link { background:var(--accent); color:#fff; }
+    .secondary-link { background:transparent; color:var(--text); }
+
+  </style>
+</head>
+
+<body>
+  <header>
+    <div>
+      <div class="brand">RFN_Personalizar-roteadores</div>
+      <div class="sub">Personalização de Roteadores • ONU • ONT</div>
+    </div>
+    <div class="actions">
+      <div id="acsBadge" class="badge unknown">ACS: verificando...</div><button class="secondary"
+        onclick="logout()">Sair</button>
+    </div>
+  </header>
+  <main>
+    <div class="toolbar">
+      <div>
+        <h1 style="margin:0">Central de Equipamentos</h1>
+        <div class="sub">V12.4.0 — Ativação por Cliente • Validação PPPoE</div>
+      </div>
+      <div class="actions"><button onclick="syncACS()">Sincronizar ACS</button><button class="secondary"
+          onclick="openCustomerModal()">+ Cliente</button><button class="secondary" onclick="openEquipmentModal()">+ Equipamento</button><button class="secondary" onclick="openProfileModal()">+ Perfil</button></div>
+    </div>
+    <div id="status" class="status"></div>
+    <div class="tabs"><button class="tab active" onclick="showPage('dashboard',this)">Dashboard</button><button
+        class="tab" onclick="showPage('equipment',this)">Equipamentos</button><button class="tab" onclick="showPage('customers',this)">Clientes</button><button class="tab"
+        onclick="showPage('profiles',this)">Perfis</button><button class="tab"
+        onclick="showPage('isp',this)">Personalização ISP</button><button class="tab"
+        onclick="showPage('acs',this)">GenieACS</button><button class="tab"
+        onclick="showPage('compatibility',this)">Compatibilidade</button></div>
+    <section id="page-dashboard" class="page active">
+      <div class="grid">
+        <div class="card">
+          <div class="title">Clientes</div>
+          <div id="cCustomers" class="num">-</div>
+        </div>
+        <div class="card">
+          <div class="title">Equipamentos</div>
+          <div id="cEquipment" class="num">-</div>
+        </div>
+        <div class="card">
+          <div class="title">Online</div>
+          <div id="cOnline" class="num">-</div>
+        </div>
+        <div class="card">
+          <div class="title">Perfis</div>
+          <div id="cProfiles" class="num">-</div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h2>Próxima etapa</h2>
+        <p class="hint">Cadastre um CPE ou sincronize um CPE que já tenha feito Inform no GenieACS. Depois, abra o
+          equipamento e associe um perfil. Os parâmetros TR-069 reais serão inseridos no perfil após coletarmos a árvore
+          de parâmetros do modelo.</p>
+      </div>
+    </section>
+    <section id="page-equipment" class="page">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Fabricante</th>
+              <th>Modelo</th>
+              <th>Tipo</th>
+              <th>Serial</th>
+              <th>MAC</th>
+              <th>Cliente</th>
+              <th>Perfil</th>
+              <th>Status</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody id="equipmentTable"></tbody>
+        </table>
+      </div>
+    </section>
+    <section id="page-customers" class="page">
+      <div class="card" style="margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+          <div><h2 style="margin:0">Cadastro de clientes</h2><p class="hint" style="margin-bottom:0">O cliente precisa estar cadastrado e associado ao CPE antes de registrar uma ativação definitiva.</p></div>
+          <button onclick="openCustomerModal()">+ Novo cliente</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table><thead><tr><th>Nome / Razão social</th><th>CPF / CNPJ</th><th>Telefone</th><th>Endereço</th><th>Usuário PPPoE cadastrado</th><th>Ações</th></tr></thead><tbody id="customersTable"></tbody></table>
+      </div>
+    </section>
+    <section id="page-profiles" class="page">
+      <div id="profilesGrid" class="profile-grid"></div>
+    </section>
+    <section id="page-isp" class="page">
+      <div class="grid">
+        <div class="card" style="grid-column:span 2;min-width:0">
+          <h2 style="margin-top:0">Personalização ISP</h2>
+          <p class="hint">Configura a identidade visual e os dados de bootstrap da sua empresa. Esta camada representa o
+            padrão personalizado do provedor; a permanência após reset depende do mecanismo suportado pelo
+            fabricante/firmware.</p>
+          <div class="form">
+            <div class="two">
+              <div><label>Nome da empresa</label><input id="ispCompany"></div>
+              <div><label>Título da tela do cliente</label><input id="ispPortalTitle"></div>
+            </div>
+            <div><label>Logo (URL pública ou data URL)</label><input id="ispLogo" placeholder="https://.../logo.png">
+              <div class="hint">A plataforma usa este endereço no cabeçalho e na visualização de personalização.</div>
+            </div>
+            <div class="two">
+              <div><label>Telefone de suporte</label><input id="ispPhone"></div>
+              <div><label>WhatsApp</label><input id="ispWhatsapp"></div>
+            </div>
+            <div><label>Mensagem da tela do cliente</label><textarea id="ispMessage" rows="3"></textarea></div>
+            <h3 style="margin:8px 0 0">Padrão Wi-Fi do provedor</h3>
+            <div class="two">
+              <div><label>SSID padrão 2.4 GHz</label><input id="ispSsid24"></div>
+              <div><label>SSID padrão 5 GHz</label><input id="ispSsid5"></div>
+            </div>
+            <h3 style="margin:8px 0 0">Bootstrap ACS</h3>
+            <div class="two">
+              <div><label>ACS URL</label><input id="ispAcsUrl" placeholder="http://acs.seudominio:7547"></div>
+              <div><label>ACS Username</label><input id="ispAcsUser"></div>
+            </div>
+            <div><label>Connection Request Path</label><input id="ispCrPath" placeholder="/tr069"></div>
+            <h3 style="margin:8px 0 0">Política pós-reset</h3>
+            <div><label>Observação técnica</label><textarea id="ispResetPolicy" rows="3"></textarea></div>
+            <div class="actions"><button onclick="saveProviderSettings()">Salvar Personalização ISP</button><button
+                class="secondary" onclick="loadProviderSettings()">Recarregar</button></div>
+          </div>
+        </div>
+        <div class="card" style="min-width:280px">
+          <h3 style="margin-top:0">Pré-visualização</h3>
+          <div style="background:#0d1627;border:1px solid var(--line);border-radius:10px;padding:18px">
+            <img id="ispPreviewLogo" alt="Logo" style="max-width:180px;max-height:70px;display:none;margin-bottom:14px">
+            <div id="ispPreviewCompany" class="big-value">Sua Empresa</div>
+            <div id="ispPreviewTitle" class="hint" style="margin-top:6px">Configuração do Equipamento</div>
+            <div class="hint-block" id="ispPreviewMessage">Este equipamento é gerenciado pelo provedor.</div>
+            <div class="kv"><span>SSID 2.4 GHz</span><b id="ispPreviewSsid24">—</b></div>
+            <div class="kv"><span>SSID 5 GHz</span><b id="ispPreviewSsid5">—</b></div>
+          </div>
+          <p class="hint" style="margin-top:12px">A pré-visualização não altera o firmware do roteador. Ela representa a
+            identidade que será usada na plataforma e nos próximos módulos de bootstrap/provisionamento.</p>
+        </div>
+      </div>
+    </section>
+    <section id="page-acs" class="page">
+      <div class="grid">
+        <div class="card">
+          <div class="title">Dispositivos vistos pelo GenieACS</div>
+          <div id="acsDevicesCount" class="num">-</div>
+        </div>
+      </div>
+      <div class="table-wrap" style="margin-top:16px">
+        <table>
+          <thead>
+            <tr>
+              <th>ID GenieACS</th>
+              <th>Fabricante</th>
+              <th>Modelo</th>
+              <th>Serial</th>
+              <th>Último Inform</th>
+              <th>Ação</th>
+            </tr>
+          </thead>
+          <tbody id="acsTable"></tbody>
+        </table>
+      </div>
+    </section>
+    <section id="page-compatibility" class="page">
+      <div class="card" style="margin-bottom:14px">
+        <h2 style="margin-top:0">Catálogo de Compatibilidade</h2>
+        <p class="hint">Esta matriz separa duas capacidades diferentes: gerenciamento remoto via ACS/OLT e personalização persistente dos padrões de fábrica. A presença de TR-069 não garante que o bloqueio ou as credenciais do ACS sobrevivam a um reset.</p>
+        <div class="two" style="align-items:end">
+          <div><label for="compatSearch">Filtrar fabricante, modelo ou capacidade</label><input id="compatSearch" placeholder="Ex.: MR60X, Portal Customize, TR-069" oninput="renderCompatibilityCatalog(this.value)"></div>
+          <div class="hint">Catálogo de referência — nenhuma configuração é aplicada automaticamente nesta tela.</div>
+        </div>
+      </div>
+      <div id="compatibilityGrid" class="grid"></div>
+      <div class="card" style="margin-top:14px">
+        <h3 style="margin-top:0">Regra operacional do RFN</h3>
+        <ol class="hint" style="padding-left:22px;line-height:1.7">
+          <li>Identificar fabricante, modelo, revisão de hardware e firmware exatos.</li>
+          <li>Confirmar a ferramenta oficial de personalização de fábrica para essa combinação, quando disponível.</li>
+          <li>Validar o acesso ao ACS/OLT e coletar a árvore de parâmetros antes de habilitar provisionamento específico do modelo.</li>
+          <li>Testar reset em unidade de laboratório, nunca primeiro em equipamento de cliente.</li>
+        </ol>
+        <p class="hint">O catálogo é um registro de compatibilidade e próximas ações; ele não desbloqueia, não altera o firmware e não envia comandos aos CPEs.</p>
+      </div>
+    </section>
+  </main>
+  <div id="modal" class="modal" onclick="closeModal(event)">
+    <div class="modal-box" onclick="event.stopPropagation()">
+      <div id="modalContent"></div>
+    </div>
+  </div>
+  <div id="loginOverlay" class="login-overlay" aria-modal="true" role="dialog" aria-labelledby="loginTitle">
+    <form id="loginForm" class="login-box">
+      <h2 id="loginTitle">Acesso administrativo</h2>
+      <label for="loginUsername">E-mail</label>
+      <input id="loginUsername" name="email" type="email" autocomplete="username" required>
+      <label for="loginPassword">Senha</label>
+      <input id="loginPassword" name="password" type="password" autocomplete="current-password" required>
+      <p id="loginError" class="login-error" aria-live="polite"></p>
+      <button type="submit">Entrar</button>
+      <p class="hint" style="margin-bottom:0">A conta deve ser criada no Supabase Auth e receber o papel admin no perfil para acessar o painel.</p>
+    </form>
+  </div>
+  <script>window.RFN_SUPABASE_URL = "https://fhlwmpeakyxrvnzwyiwv.supabase.co"; window.RFN_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_ehrwtRtHihoUDaJA5iqfhw_CJJ-UodJ";</script>
+  <script src="/app.js?v=16" defer></script>
+</body>
+
+</html>
