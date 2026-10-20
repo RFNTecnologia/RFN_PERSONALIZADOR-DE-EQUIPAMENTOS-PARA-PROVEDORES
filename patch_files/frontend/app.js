@@ -20,6 +20,7 @@ function showPage(name, btn) {
   if (name === 'isp') loadProviderSettings();
   if (name === 'acs') loadACS();
   if (name === 'compatibility') renderCompatibilityCatalog($('compatSearch')?.value || '');
+  if (name === 'dashboard') renderOperationsDashboard();
 }
 async function api(url, opt = {}) {
   if (authSession?.access_token && !url.startsWith('/api/auth/')) { await ensureFreshSession(); await syncAuthCookie(authSession); }
@@ -128,9 +129,42 @@ async function loadAll() {
     $('cEquipment').textContent = d.equipment;
     $('cOnline').textContent = d.online_equipment;
     $('cProfiles').textContent = d.profiles;
-    renderEquipment(); renderCustomers(); renderProfiles(); checkACS();
+    renderEquipment(); renderCustomers(); renderProfiles(); renderOperationsDashboard(); checkACS();
   } catch (e) { showStatus(e.message, false); }
 }
+
+function renderOperationsDashboard() {
+  const host = $('operationsDashboard');
+  if (!host) return;
+  const q = String($('operationsSearch')?.value || '').trim().toLocaleLowerCase('pt-BR');
+  const offline = equipment.filter(e => e.status !== 'online').length;
+  const unassigned = equipment.filter(e => !e.customer_id).length;
+  const noProfile = equipment.filter(e => !e.profile_id).length;
+  const noAcs = equipment.filter(e => !e.acs_device_id).length;
+  const alerts = [
+    { label: 'Equipamentos sem cliente', count: unassigned, hint: 'Associe o titular em Equipamentos → Abrir.' },
+    { label: 'Equipamentos sem perfil', count: noProfile, hint: 'Associe um perfil compatível antes de provisionar.' },
+    { label: 'Sem vínculo GenieACS', count: noAcs, hint: 'Confira o ACS ID e sincronize o CPE.' },
+    { label: 'Não reportados online', count: offline, hint: 'Confira o último contato; estado desconhecido não significa necessariamente defeito.' }
+  ].filter(x => x.count > 0);
+  const visible = equipment.filter(e => !q || [e.manufacturer,e.model,e.serial_number,e.mac,e.customer_name,e.profile_name,e.acs_device_id].some(v => String(v || '').toLocaleLowerCase('pt-BR').includes(q)));
+  const alertHtml = alerts.length ? `<div class="grid ops-alerts">${alerts.map(a => `<div class="card ops-alert"><div class="ops-alert-count">${a.count}</div><div><b>${esc(a.label)}</b><div class="hint">${esc(a.hint)}</div></div></div>`).join('')}</div>` : '<div class="hint-block">Nenhuma pendência cadastral identificada no inventário atual.</div>';
+  const rows = visible.map(e => {
+    const status = e.status === 'online' ? '<span class="badge online">Online</span>' : '<span class="badge unknown">Verificar</span>';
+    const pending = [];
+    if (!e.customer_id) pending.push('sem cliente');
+    if (!e.profile_id) pending.push('sem perfil');
+    if (!e.acs_device_id) pending.push('sem ACS');
+    const readiness = pending.length ? `<span class="badge unknown">${esc(pending.join(' · '))}</span>` : '<span class="badge online">Cadastro completo</span>';
+    return `<tr><td><b>${esc(e.manufacturer)} ${esc(e.model)}</b><div class="hint mono">${esc(e.serial_number)}</div></td><td>${esc(e.customer_name || 'Não associado')}</td><td>${esc(e.profile_name || 'Sem perfil')}</td><td>${status}</td><td>${readiness}</td><td><button class="secondary" onclick="equipmentActions(${Number(e.id)},'${esc(e.acs_device_id || '')}')">Abrir operação</button></td></tr>`;
+  }).join('') || '<tr><td colspan="6" class="empty">Nenhum equipamento corresponde à busca.</td></tr>';
+  host.innerHTML = `${alertHtml}<div class="table-wrap"><table><thead><tr><th>Equipamento</th><th>Cliente</th><th>Perfil</th><th>Inventário</th><th>Pendências</th><th>Ação</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+async function refreshOperationsDashboard() {
+  await loadAll();
+  showStatus('Painel operacional atualizado.');
+}
+
 function renderEquipment() {
   const tb = $('equipmentTable');
   if (!equipment.length) { tb.innerHTML = '<tr><td colspan="9" class="empty">Nenhum equipamento cadastrado.</td></tr>'; return; }
