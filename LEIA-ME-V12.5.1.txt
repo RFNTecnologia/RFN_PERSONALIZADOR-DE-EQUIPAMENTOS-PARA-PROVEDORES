@@ -1,0 +1,16 @@
+RFN V12.5.1 — Histórico e Estado Operacional
+
+Mudanças:
+- Diferencia explicitamente o estado atual do CPE dos snapshots guardados em cada operação.
+- Renomeia o campo histórico para “Estado observado na operação”.
+- Identifica o Inform histórico como “Inform da operação”, evitando confundi-lo com o último Inform atual.
+- Mantém a explicação de que configuração confirmada e conectividade PPPoE são estados separados.
+
+Instalação:
+1. Extraia o ZIP diretamente na pasta principal RFN_Personalizar-roteadores, ao lado de docker-compose.yml.
+2. No PowerShell nessa pasta execute: Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+3. Execute: .\Aplicar-V12.5.1-Historico-Estado.ps1
+4. Execute: docker compose up -d --build api nginx
+5. Abra http://localhost e pressione Ctrl+F5.
+
+O instalador faz backup automático e substitui apenas frontend/app.js e frontend/index.html. Não inclui nem altera .env, não executa migrations e não envia comandos ao roteador.
