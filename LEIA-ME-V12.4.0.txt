@@ -1,0 +1,33 @@
+RFN Personalizar Roteadores — V12.4.0
+Ativação por cliente com validação do usuário PPPoE.
+
+INSTALAÇÃO
+1. Extraia este ZIP diretamente na pasta principal RFN_Personalizar-roteadores, a mesma que contém docker-compose.yml. No seu projeto, o caminho ativo é C:\Users\robso\OneDrive\Desktop\RFN_Personalizar-roteadores.
+2. Abra o PowerShell nessa pasta. Se o Windows bloquear a execução do script, execute nesta janela:
+   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+3. Execute:
+   .\Aplicar-V12.4.0-Ativacao-Cliente.ps1
+4. Depois da mensagem de sucesso, execute:
+   docker compose up -d --build api nginx
+5. Abra http://localhost e pressione Ctrl+F5.
+
+O QUE MUDA
+- O cadastro do cliente passa a guardar o usuário PPPoE esperado (somente o nome de usuário; nunca a senha).
+- É possível editar clientes já cadastrados e preencher/atualizar o usuário PPPoE.
+- A ativação em modo Cliente final exige cliente associado ao equipamento, perfil RESIDENCIAL associado e usuário PPPoE previamente registrado para aquele cliente.
+- O usuário PPPoE digitado no formulário deve coincidir com o cadastro; a API valida novamente antes de enviar a tarefa ao GenieACS.
+- A tela de Provisionamento exibe uma pré-checagem do cliente, usuário PPPoE e perfil associado.
+- Uma migration idempotente cria a coluna e um índice único para evitar vincular o mesmo usuário PPPoE a vários clientes.
+
+COMO USAR DEPOIS DA INSTALAÇÃO
+1. Abra Clientes → Editar dados / PPPoE no cadastro do cliente e informe o usuário PPPoE que pertence a ele. A senha PPPoE não deve ser inserida nesse cadastro.
+2. Em Equipamentos → Abrir, confirme que o equipamento está vinculado ao cliente correto e ao perfil RESIDENCIAL.
+3. Abra Provisionamento, selecione Ativação de cliente final e confira a pré-checagem. O usuário PPPoE será preenchido a partir do cadastro.
+4. Informe a senha PPPoE e os dados Wi-Fi, confirme somente depois de validar no MikroTik que a conta existe e pertence ao cliente, revise a prévia e envie.
+5. O sistema continuará distinguindo tarefa aceita, configuração conferida após Inform e estado de conectividade PPPoE.
+
+IMPORTANTE
+- A instalação altera somente os arquivos da aplicação e acrescenta a migration 006; não envia comandos ao roteador.
+- O arquivo .env não é substituído. O script cria backup dos arquivos antes de aplicar o patch.
+- O PPPoE usado atualmente no MR60X é a conta de laboratório `teste`. Não a registre como conta de um assinante real, a menos que ela seja realmente a conta definitiva desse assinante.
+- A existência do usuário no cadastro é uma validação de consistência interna. O operador ainda precisa confirmar separadamente que usuário e senha foram criados e validados no MikroTik.

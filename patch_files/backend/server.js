@@ -254,20 +254,68 @@ app.get("/api/customers", async (_req, res, next) => {
 
 app.post("/api/customers", async (req, res, next) => {
   try {
-    const { name, document, phone, address } = req.body;
-    if (!name) return res.status(400).json({ error: "name é obrigatório" });
+    const name = String(req.body?.name || "").trim();
+    const document = String(req.body?.document || "").trim() || null;
+    const phone = String(req.body?.phone || "").trim() || null;
+    const address = String(req.body?.address || "").trim() || null;
+    const pppoeUsername = String(req.body?.pppoe_username || "").trim() || null;
+    if (!name) return res.status(400).json({ error: "Informe o nome completo ou razão social do cliente." });
+    if (name.length > 180 || (document && document.length > 40) || (phone && phone.length > 50) || (address && address.length > 300)) {
+      return res.status(400).json({ error: "Um ou mais campos do cliente excedem o tamanho permitido." });
+    }
+    if (pppoeUsername && pppoeUsername.length > 180) {
+      return res.status(400).json({ error: "O usuário PPPoE deve ter até 180 caracteres." });
+    }
     const q = await pool.query(
-      `insert into customers(name, document, phone, address) values($1,$2,$3,$4) returning *`,
-      [name, document || null, phone || null, address || null]
+      `insert into customers(name, document, phone, address, pppoe_username)
+       values($1,$2,$3,$4,$5) returning *`,
+      [name, document, phone, address, pppoeUsername]
     );
     res.status(201).json(q.rows[0]);
-  } catch (e) { next(e); }
+  } catch (e) {
+    if (e.code === "23505" && e.constraint === "customers_pppoe_username_unique_idx") {
+      return res.status(409).json({ error: "Esse usuário PPPoE já está vinculado a outro cliente." });
+    }
+    next(e);
+  }
+});
+
+app.patch("/api/customers/:id", async (req, res, next) => {
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ error: "ID de cliente inválido." });
+  const name = String(req.body?.name || "").trim();
+  const document = String(req.body?.document || "").trim() || null;
+  const phone = String(req.body?.phone || "").trim() || null;
+  const address = String(req.body?.address || "").trim() || null;
+  const pppoeUsername = String(req.body?.pppoe_username || "").trim() || null;
+  if (!name) return res.status(400).json({ error: "Informe o nome completo ou razão social do cliente." });
+  if (name.length > 180 || (document && document.length > 40) || (phone && phone.length > 50) || (address && address.length > 300)) {
+    return res.status(400).json({ error: "Um ou mais campos do cliente excedem o tamanho permitido." });
+  }
+  if (pppoeUsername && pppoeUsername.length > 180) {
+    return res.status(400).json({ error: "O usuário PPPoE deve ter até 180 caracteres." });
+  }
+  try {
+    const q = await pool.query(
+      `update customers
+          set name=$1, document=$2, phone=$3, address=$4, pppoe_username=$5
+        where id=$6 returning *`,
+      [name, document, phone, address, pppoeUsername, id]
+    );
+    if (!q.rowCount) return res.status(404).json({ error: "Cliente não encontrado." });
+    res.json(q.rows[0]);
+  } catch (e) {
+    if (e.code === "23505" && e.constraint === "customers_pppoe_username_unique_idx") {
+      return res.status(409).json({ error: "Esse usuário PPPoE já está vinculado a outro cliente." });
+    }
+    next(e);
+  }
 });
 
 app.get("/api/equipment", async (_req, res, next) => {
   try {
     const q = await pool.query(`
-      select e.*, c.name customer_name, p.name profile_name
+      select e.*, c.name customer_name, c.pppoe_username as customer_pppoe_username, p.name profile_name
       from equipment e
       left join customers c on c.id=e.customer_id
       left join equipment_profiles p on p.id=e.profile_id
@@ -808,7 +856,12 @@ app.post("/api/acs/devices/:deviceId/provision", async (req, res) => {
     if (notWritable.length) {
       return res.status(409).json({ error: "Envio bloqueado: existem parâmetros ausentes ou não graváveis no cache atual.", parameters: notWritable });
     }
-    const cleanPairs = parameterValues.map(([parameterPath, value]) => [parameterPath.trim(), value]);
+    const cleanPairs = parameterValues.map(([parameterPath, value]) => {
+      const normalizedPath = parameterPath.trim();
+      const normalizedValue = normalizedPath === "Device.PPP.Interface.1.Username" && typeof value === "string"
+        ? value.trim() : value;
+      return [normalizedPath, normalizedValue];
+    });
     const getRequested = (pathValue) => cleanPairs.find(([path]) => path === pathValue)?.[1];
     const booleanPaths = [
       "Device.PPP.Interface.1.Enable",
@@ -854,9 +907,27 @@ app.post("/api/acs/devices/:deviceId/provision", async (req, res) => {
 
     const safeExpectedValues = Object.fromEntries(cleanPairs.filter(([pathValue]) => !MR60X_SENSITIVE_PATHS.has(pathValue)));
     const sensitivePaths = cleanPairs.filter(([pathValue]) => MR60X_SENSITIVE_PATHS.has(pathValue)).map(([pathValue]) => pathValue);
-    const equipmentRow = await pool.query("select id, customer_id, profile_id from equipment where acs_device_id=$1 limit 1", [deviceId]);
-    if (operationMode === "customer" && !equipmentRow.rows[0]?.customer_id) {
+    const equipmentQuery = await pool.query(
+      `select e.id, e.customer_id, e.profile_id, c.name as customer_name,
+              c.pppoe_username as customer_pppoe_username, p.name as equipment_profile_name
+         from equipment e
+         left join customers c on c.id=e.customer_id
+         left join equipment_profiles p on p.id=e.profile_id
+        where e.acs_device_id=$1 limit 1`,
+      [deviceId]
+    );
+    const registeredEquipment = equipmentQuery.rows[0] || null;
+    if (operationMode === "customer" && !registeredEquipment?.customer_id) {
       return res.status(409).json({ error: "Antes da ativação de cliente final, cadastre o cliente e associe-o ao equipamento em Equipamentos → Abrir → Cliente responsável." });
+    }
+    if (operationMode === "customer" && registeredEquipment?.equipment_profile_name !== "RESIDENCIAL") {
+      return res.status(409).json({ error: "Para ativação de cliente final, associe ao equipamento o perfil RESIDENCIAL em Equipamentos → Abrir → Perfil." });
+    }
+    if (operationMode === "customer" && !registeredEquipment?.customer_pppoe_username) {
+      return res.status(409).json({ error: "Cadastre o usuário PPPoE esperado no cadastro do cliente antes de ativar. Use Clientes → Editar dados / PPPoE. A senha PPPoE não deve ser salva no cadastro." });
+    }
+    if (operationMode === "customer" && pppoeUsername !== String(registeredEquipment.customer_pppoe_username).trim()) {
+      return res.status(409).json({ error: "O usuário PPPoE informado não coincide com o usuário cadastrado para este cliente. Confira Clientes e a conta criada no MikroTik antes de enviar." });
     }
     const residentialProfile = await pool.query("select id, name from equipment_profiles where name='RESIDENCIAL' limit 1");
     const created = await pool.query(
@@ -866,8 +937,8 @@ app.post("/api/acs/devices/:deviceId/provision", async (req, res) => {
          status, requested_by, requested_by_email, observed_summary)
        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,'submitting',$15,$16,$17::jsonb)
        returning id, created_at`,
-      [deviceId, equipmentRow.rows[0]?.id || null, equipmentRow.rows[0]?.customer_id || null,
-        residentialProfile.rows[0]?.id || equipmentRow.rows[0]?.profile_id || null,
+      [deviceId, registeredEquipment?.id || null, registeredEquipment?.customer_id || null,
+        residentialProfile.rows[0]?.id || registeredEquipment?.profile_id || null,
         residentialProfile.rows[0]?.name || "RESIDENCIAL", manufacturer || null, model || null, operationMode,
         pppoeUsername, ssid24, ssid5, cleanPairs.length, JSON.stringify(safeExpectedValues), sensitivePaths,
         req.authUser?.id || null, req.authUser?.email || null, JSON.stringify(provisioningSnapshot(device))]

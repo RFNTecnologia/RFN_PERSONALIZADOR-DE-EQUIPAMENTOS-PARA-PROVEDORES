@@ -140,22 +140,36 @@ function renderCustomers() {
   const tb = $('customersTable');
   if (!tb) return;
   if (!customers.length) {
-    tb.innerHTML = '<tr><td colspan="5" class="empty">Nenhum cliente cadastrado. Clique em + Cliente para criar o primeiro cadastro.</td></tr>';
+    tb.innerHTML = '<tr><td colspan="6" class="empty">Nenhum cliente cadastrado. Clique em + Cliente para criar o primeiro cadastro.</td></tr>';
     return;
   }
-  tb.innerHTML = customers.map(c => `<tr><td>${esc(c.name)}</td><td class="mono">${esc(c.document || '—')}</td><td>${esc(c.phone || '—')}</td><td>${esc(c.address || '—')}</td><td><span class="badge online">Cadastro ativo</span></td></tr>`).join('');
+  tb.innerHTML = customers.map(c => `<tr><td>${esc(c.name)}</td><td class="mono">${esc(c.document || '—')}</td><td>${esc(c.phone || '—')}</td><td>${esc(c.address || '—')}</td><td><div class="mono">${esc(c.pppoe_username || 'Não cadastrado')}</div><div class="hint">Somente o usuário; senha não é armazenada</div></td><td><button class="secondary" onclick="editCustomer(${c.id})">Editar dados / PPPoE</button></td></tr>`).join('');
 }
-function openCustomerModal() {
-  openModal(`<h2>Novo cliente</h2><p class="hint">Cadastre o titular antes de associar o equipamento e fazer a ativação definitiva.</p><div class="form"><div><label>Nome completo / Razão social *</label><input id="cName" required maxlength="180" autocomplete="name"></div><div class="two"><div><label>CPF / CNPJ</label><input id="cDocument" maxlength="40"></div><div><label>Telefone</label><input id="cPhone" maxlength="50" autocomplete="tel"></div></div><div><label>Endereço</label><input id="cAddress" maxlength="300" autocomplete="street-address"></div><div class="actions"><button onclick="saveCustomer()">Salvar cliente</button><button class="secondary" onclick="closeModal()">Cancelar</button></div></div>`);
+function openCustomerModal(customer = null) {
+  const editing = Boolean(customer?.id);
+  const c = customer || {};
+  openModal(`<h2>${editing ? 'Editar cliente' : 'Novo cliente'}</h2><p class="hint">Cadastre o titular e, quando a conta estiver criada no MikroTik, registre o nome de usuário PPPoE que pertence a ele. A senha PPPoE nunca é armazenada no cadastro.</p><div class="form"><div><label>Nome completo / Razão social *</label><input id="cName" required maxlength="180" autocomplete="name" value="${esc(c.name || '')}"></div><div class="two"><div><label>CPF / CNPJ</label><input id="cDocument" maxlength="40" value="${esc(c.document || '')}"></div><div><label>Telefone</label><input id="cPhone" maxlength="50" autocomplete="tel" value="${esc(c.phone || '')}"></div></div><div><label>Endereço</label><input id="cAddress" maxlength="300" autocomplete="street-address" value="${esc(c.address || '')}"></div><div><label>Usuário PPPoE do cliente (sem senha)</label><input id="cPppoeUsername" maxlength="180" autocomplete="off" value="${esc(c.pppoe_username || '')}" placeholder="Ex.: cliente123"><p class="hint">Para ativação definitiva, este usuário precisa coincidir exatamente com o informado no provisionamento e com a conta validada no MikroTik.</p></div><div class="actions"><button onclick="saveCustomer(${editing ? c.id : 'null'})">${editing ? 'Salvar alterações' : 'Salvar cliente'}</button><button class="secondary" onclick="closeModal()">Cancelar</button></div></div>`);
   $('cName')?.focus();
 }
-async function saveCustomer() {
+function editCustomer(id) {
+  const customer = customers.find(c => String(c.id) === String(id));
+  if (!customer) { showStatus('Cliente não encontrado.', false); return; }
+  openCustomerModal(customer);
+}
+async function saveCustomer(id = null) {
   try {
     const name = $('cName')?.value.trim();
     if (!name) throw new Error('Informe o nome do cliente.');
-    await api('/api/customers', { method: 'POST', body: JSON.stringify({ name, document: $('cDocument')?.value.trim(), phone: $('cPhone')?.value.trim(), address: $('cAddress')?.value.trim() }) });
+    const body = {
+      name,
+      document: $('cDocument')?.value.trim(),
+      phone: $('cPhone')?.value.trim(),
+      address: $('cAddress')?.value.trim(),
+      pppoe_username: $('cPppoeUsername')?.value.trim()
+    };
+    await api(id ? `/api/customers/${id}` : '/api/customers', { method: id ? 'PATCH' : 'POST', body: JSON.stringify(body) });
     closeModal(); await loadAll(); showPage('customers', document.querySelector('.tabs .tab[onclick*="customers"]'));
-    showStatus('Cliente cadastrado. Agora associe-o ao equipamento em Equipamentos → Abrir.');
+    showStatus(id ? 'Cadastro do cliente atualizado.' : 'Cliente cadastrado. Agora associe-o ao equipamento em Equipamentos → Abrir.');
   } catch (e) { showStatus(e.message, false); }
 }
 function renderProfiles() {
@@ -555,6 +569,7 @@ function renderProvisionForm(values, acsId) {
       </select>
     </div>
     <div id="provModeHint" class="hint-block">Modo laboratório: use apenas uma conta PPPoE de teste criada no MikroTik. Não informe credenciais de cliente real.</div>
+    <div id="customerActivationReadiness" class="card" style="display:none;margin:10px 0"></div>
     <div class="two">${fields.join('')}</div>
     <div id="customerActivationConfirmWrap" class="hint-block" style="display:none;border-left:4px solid #c88619">
       <label style="display:flex;align-items:flex-start;gap:8px;color:var(--text);font-size:13px">
@@ -567,6 +582,8 @@ function renderProvisionForm(values, acsId) {
     <div class="hint-block">O RFN mantém um histórico operacional sem gravar as senhas PPPoE/Wi-Fi. “Confirmado” significa que os valores não secretos esperados foram encontrados no cache após um Inform posterior; o estado da sessão PPPoE aparece separadamente.</div>
     <div id="provisioningHistory" style="margin-top:12px"><div class="card"><div class="hint">Carregando histórico de ativações...</div></div></div>
   </div>`;
+  const usernameInput = $('prov_pppoeUser');
+  if (usernameInput) usernameInput.dataset.labUsername = getValue('Device.PPP.Interface.1.Username');
   updateProvisioningMode();
   loadProvisioningHistory(acsId);
 }
@@ -582,6 +599,30 @@ function updateProvisioningMode() {
   const wifi24 = $('prov_ssid24');
   const wifi5 = $('prov_ssid5');
   const wifiPass = $('prov_wifiPass');
+  const linkedEquipment = equipment.find(x => String(x.acs_device_id || '') === String(currentDeviceModal.acsId || ''));
+  const linkedCustomer = linkedEquipment ? customers.find(c => String(c.id) === String(linkedEquipment.customer_id)) : null;
+  const customerUser = String(linkedCustomer?.pppoe_username || '').trim();
+  const readiness = $('customerActivationReadiness');
+  if (readiness) {
+    if (mode !== 'customer') {
+      readiness.style.display = 'none';
+      readiness.innerHTML = '';
+    } else {
+      readiness.style.display = 'block';
+      const checks = [
+        { label: 'Equipamento associado a cliente', ok: !!linkedCustomer, detail: linkedCustomer?.name || 'Nenhum cliente associado' },
+        { label: 'Usuário PPPoE registrado no cliente', ok: !!customerUser, detail: customerUser || 'Não cadastrado; edite o cliente na aba Clientes' },
+        { label: 'Perfil residencial associado', ok: linkedEquipment?.profile_name === 'RESIDENCIAL', detail: linkedEquipment?.profile_name || 'Sem perfil associado' }
+      ];
+      readiness.innerHTML = `<h4 style="margin:0 0 8px">Pré-checagem da ativação do cliente</h4>${checks.map(c => `<div class="kv"><span>${c.ok ? '✓' : '⚠'} ${esc(c.label)}</span><b style="text-align:right;max-width:60%;overflow-wrap:anywhere">${esc(c.detail)}</b></div>`).join('')}<p class="hint">A ativação definitiva só será liberada quando os pré-requisitos forem válidos e o usuário digitado coincidir com o cadastro. A senha PPPoE não é salva no cadastro.</p>`;
+    }
+  }
+  if (mode === 'customer' && customerUser && userInput && userInput.dataset.provisionMode !== 'customer') {
+    userInput.value = customerUser;
+  } else if (mode === 'lab' && userInput?.dataset.provisionMode === 'customer') {
+    userInput.value = userInput.dataset.labUsername || userInput.value;
+  }
+  if (userInput) userInput.dataset.provisionMode = mode;
   if (mode === 'customer') {
     if (hint) {
       hint.style.borderLeft = '4px solid #c88619';
@@ -678,6 +719,27 @@ async function sendProvisioning(acsId) {
   }
   const proposedUser = String(parameterValues.find(([path]) => path === 'Device.PPP.Interface.1.Username')?.[1] ?? '').trim();
   const currentUser = String(currentProvisionValues.find(x => x.path === 'Device.PPP.Interface.1.Username')?.value ?? '').trim();
+  if (mode === 'customer') {
+    const linkedEquipment = equipment.find(x => String(x.acs_device_id || '') === String(acsId));
+    const linkedCustomer = linkedEquipment ? customers.find(c => String(c.id) === String(linkedEquipment.customer_id)) : null;
+    const expectedUser = String(linkedCustomer?.pppoe_username || '').trim();
+    if (!linkedEquipment || !linkedCustomer) {
+      showStatus('Ativação bloqueada: associe um cliente cadastrado ao equipamento em Equipamentos → Abrir.', false);
+      return;
+    }
+    if (linkedEquipment.profile_name !== 'RESIDENCIAL') {
+      showStatus('Ativação bloqueada: associe o perfil RESIDENCIAL ao equipamento antes de ativar.', false);
+      return;
+    }
+    if (!expectedUser) {
+      showStatus('Ativação bloqueada: abra Clientes → Editar dados / PPPoE e cadastre o usuário PPPoE do cliente (não a senha).', false);
+      return;
+    }
+    if (proposedUser !== expectedUser) {
+      showStatus('Ativação bloqueada: o usuário PPPoE digitado não coincide com o usuário cadastrado para este cliente.', false);
+      return;
+    }
+  }
   if (mode === 'customer' && proposedUser && currentUser && proposedUser === currentUser) {
     const proceedSameUser = window.confirm(`O usuário PPPoE proposto (${proposedUser}) é igual ao que o CPE já informa. Se a intenção é substituir a conta temporária, volte e informe o usuário definitivo. Deseja prosseguir mesmo assim?`);
     if (!proceedSameUser) return;
