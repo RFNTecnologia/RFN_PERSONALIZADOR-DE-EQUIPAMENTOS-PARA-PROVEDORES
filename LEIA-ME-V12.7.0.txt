@@ -1,0 +1,27 @@
+# RFN V12.7.0 — Controle Avançado do Equipamento (MERCUSYS MR60X)
+
+## O que acrescenta
+- Expande o catálogo específico do MR60X para controles TR-069 de PPPoE/WAN, Wi-Fi 2,4/5 GHz, redes convidadas, LAN/DHCP, VLAN e gerenciamento ACS.
+- Permite editar um parâmetro por operação com busca e filtro por categoria.
+- Só aceita escrita quando o caminho pertence ao catálogo validado e o GenieACS reporta o parâmetro em cache e gravável.
+- Valida tipos, endereços IPv4/máscaras, SSID, senha Wi-Fi, MRU, VLAN ID, intervalos e opções suportadas reportadas pelo CPE.
+- Adiciona solicitação de reinicialização remota via TR-069; não adiciona reset de fábrica.
+- Registra operações no histórico sem gravar senhas ou chaves.
+
+## Instalação
+1. Extraia o ZIP em uma pasta.
+2. Abra o PowerShell na raiz de `RFN_Personalizar-roteadores`.
+3. Execute o instalador pelo caminho onde extraiu o ZIP. Exemplo:
+   `& 'C:\caminho\extraido\Aplicar-V12.7.0-Controle-Avancado.ps1'`
+4. Reconstrua a API e o frontend:
+   `docker compose up -d --build api nginx`
+5. Atualize o navegador com `Ctrl+F5` e abra Equipamentos > Abrir MR60X > Laboratório MR60X.
+
+## Limites e segurança
+- O catálogo de escrita está habilitado somente para MERCUSYS MR60X. Outros fabricantes/modelos exigem catálogos e validações próprios.
+- Parâmetros ausentes ou reportados como não graváveis permanecem bloqueados. A aplicação não tenta forçar a escrita.
+- Alterar PPPoE, IP LAN/DHCP, VLAN ou TR-069 pode interromper ou perder o acesso; o formulário pede confirmação e a API exige confirmação para os parâmetros críticos.
+- Instalar o patch não envia comandos ao roteador, não muda `.env`, contas PPPoE, dados do banco ou migrações.
+- Senhas PPPoE, Wi-Fi, ACS e Connection Request não são mostradas nem persistidas no histórico. Para segredos, um Inform posterior confirma contato do CPE, não a leitura de volta do valor secreto.
+- A reinicialização interrompe temporariamente o serviço; não há botão de reset de fábrica.
+- O patch não altera a senha de administrador da interface web nem a aparência do firmware. Isso depende de suporte específico do firmware/fabricante e não pode ser presumido via TR-069.

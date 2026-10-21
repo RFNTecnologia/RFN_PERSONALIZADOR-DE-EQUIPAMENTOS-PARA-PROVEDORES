@@ -584,27 +584,77 @@ function flattenDevice(node, prefix = "", out = []) {
 }
 
 const MR60X_PARAMETER_CATALOG = [
-  { id: "pppoe.username", category: "PPPoE", label: "Usuário PPPoE", path: "Device.PPP.Interface.1.Username", sensitive: false, safeProbe: false },
-  { id: "pppoe.password", category: "PPPoE", label: "Senha PPPoE", path: "Device.PPP.Interface.1.Password", sensitive: true, safeProbe: false },
-  { id: "pppoe.enable", category: "PPPoE", label: "PPPoE habilitado", path: "Device.PPP.Interface.1.Enable", sensitive: false, safeProbe: true },
-  { id: "pppoe.mru", category: "PPPoE", label: "MRU PPPoE", path: "Device.PPP.Interface.1.MaxMRUSize", sensitive: false, safeProbe: true },
-  { id: "pppoe.dns", category: "PPPoE", label: "DNS PPPoE", path: "Device.PPP.Interface.1.IPCP.DNSServers", sensitive: false, safeProbe: false },
-  { id: "pppoe.trigger", category: "PPPoE", label: "Disparo da conexão", path: "Device.PPP.Interface.1.ConnectionTrigger", sensitive: false, safeProbe: true },
-  { id: "wifi.ssid24", category: "Wi-Fi", label: "SSID 2.4 GHz", path: "Device.WiFi.SSID.1.SSID", sensitive: false, safeProbe: false },
-  { id: "wifi.ssid5", category: "Wi-Fi", label: "SSID 5 GHz", path: "Device.WiFi.SSID.3.SSID", sensitive: false, safeProbe: false },
-  { id: "wifi.psk24", category: "Wi-Fi", label: "Chave Wi-Fi 2.4 GHz", path: "Device.WiFi.AccessPoint.1.Security.PreSharedKey", sensitive: true, safeProbe: false },
-  { id: "wifi.psk5", category: "Wi-Fi", label: "Chave Wi-Fi 5 GHz", path: "Device.WiFi.AccessPoint.3.Security.PreSharedKey", sensitive: true, safeProbe: false },
-  { id: "wifi.mode24", category: "Wi-Fi", label: "Modo de segurança 2.4 GHz", path: "Device.WiFi.AccessPoint.1.Security.ModeEnabled", sensitive: false, safeProbe: false },
-  { id: "wifi.mode5", category: "Wi-Fi", label: "Modo de segurança 5 GHz", path: "Device.WiFi.AccessPoint.3.Security.ModeEnabled", sensitive: false, safeProbe: false },
-  { id: "mgmt.url", category: "TR-069", label: "URL de conexão ACS", path: "Device.ManagementServer.URL", sensitive: false, safeProbe: false },
-  { id: "mgmt.username", category: "TR-069", label: "Usuário ACS", path: "Device.ManagementServer.Username", sensitive: false, safeProbe: false },
-  { id: "mgmt.password", category: "TR-069", label: "Senha ACS", path: "Device.ManagementServer.Password", sensitive: true, safeProbe: false },
-  { id: "mgmt.enablecwmp", category: "TR-069", label: "CWMP habilitado", path: "Device.ManagementServer.EnableCWMP", sensitive: false, safeProbe: true },
-  { id: "mgmt.periodic", category: "TR-069", label: "Periodic Inform", path: "Device.ManagementServer.PeriodicInformEnable", sensitive: false, safeProbe: true },
-  { id: "mgmt.interval", category: "TR-069", label: "Intervalo Periodic Inform", path: "Device.ManagementServer.PeriodicInformInterval", sensitive: false, safeProbe: true },
-  { id: "mgmt.connection_request_user", category: "TR-069", label: "Usuário Connection Request", path: "Device.ManagementServer.ConnectionRequestUsername", sensitive: false, safeProbe: false },
-  { id: "mgmt.connection_request_password", category: "TR-069", label: "Senha Connection Request", path: "Device.ManagementServer.ConnectionRequestPassword", sensitive: true, safeProbe: false },
-  { id: "vlan.termination1", category: "VLAN", label: "VLANID termination 1", path: "Device.Ethernet.VLANTermination.1.VLANID", sensitive: false, safeProbe: false },
+  // PPPoE / WAN
+  { id: "pppoe.enable", category: "PPPoE / WAN", label: "PPPoE habilitado", path: "Device.PPP.Interface.1.Enable", safeProbe: true, critical: true },
+  { id: "pppoe.username", category: "PPPoE / WAN", label: "Usuário PPPoE", path: "Device.PPP.Interface.1.Username", critical: true },
+  { id: "pppoe.password", category: "PPPoE / WAN", label: "Senha PPPoE", path: "Device.PPP.Interface.1.Password", sensitive: true, critical: true },
+  { id: "pppoe.trigger", category: "PPPoE / WAN", label: "Disparo da conexão", path: "Device.PPP.Interface.1.ConnectionTrigger", safeProbe: true, critical: true, options: ["AlwaysOn", "OnDemand"] },
+  { id: "pppoe.mru", category: "PPPoE / WAN", label: "MRU PPPoE", path: "Device.PPP.Interface.1.MaxMRUSize", safeProbe: true, critical: true },
+  { id: "pppoe.dns", category: "PPPoE / WAN", label: "DNS PPPoE", path: "Device.PPP.Interface.1.IPCP.DNSServers", critical: true },
+  { id: "pppoe.acname", category: "PPPoE / WAN", label: "Nome do concentrador (ACName)", path: "Device.PPP.Interface.1.PPPoE.ACName", critical: true },
+  { id: "pppoe.servicename", category: "PPPoE / WAN", label: "Nome do serviço PPPoE", path: "Device.PPP.Interface.1.PPPoE.ServiceName", critical: true },
+  { id: "pppoe.idle", category: "PPPoE / WAN", label: "Tempo ocioso antes de desconectar", path: "Device.PPP.Interface.1.IdleDisconnectTime", critical: true },
+  { id: "pppoe.echo", category: "PPPoE / WAN", label: "Intervalo de eco LCP", path: "Device.PPP.Interface.1.LCPEcho", critical: true },
+  // Wi-Fi 2.4 GHz
+  { id: "wifi24.radio", category: "Wi-Fi 2,4 GHz", label: "Rádio 2,4 GHz habilitado", path: "Device.WiFi.Radio.1.Enable" },
+  { id: "wifi24.auto", category: "Wi-Fi 2,4 GHz", label: "Seleção automática de canal", path: "Device.WiFi.Radio.1.AutoChannelEnable" },
+  { id: "wifi24.channel", category: "Wi-Fi 2,4 GHz", label: "Canal 2,4 GHz", path: "Device.WiFi.Radio.1.Channel", optionsPath: "Device.WiFi.Radio.1.PossibleChannels" },
+  { id: "wifi24.bandwidth", category: "Wi-Fi 2,4 GHz", label: "Largura do canal 2,4 GHz", path: "Device.WiFi.Radio.1.OperatingChannelBandwidth", optionsPath: "Device.WiFi.Radio.1.SupportedOperatingChannelBandwidths" },
+  { id: "wifi24.standards", category: "Wi-Fi 2,4 GHz", label: "Padrões Wi-Fi 2,4 GHz", path: "Device.WiFi.Radio.1.OperatingStandards" },
+  { id: "wifi24.power", category: "Wi-Fi 2,4 GHz", label: "Potência de transmissão 2,4 GHz", path: "Device.WiFi.Radio.1.TransmitPower", optionsPath: "Device.WiFi.Radio.1.TransmitPowerSupported" },
+  { id: "wifi24.ssid_enable", category: "Wi-Fi 2,4 GHz", label: "SSID principal habilitado", path: "Device.WiFi.SSID.1.Enable" },
+  { id: "wifi24.ssid", category: "Wi-Fi 2,4 GHz", label: "Nome do Wi-Fi 2,4 GHz", path: "Device.WiFi.SSID.1.SSID" },
+  { id: "wifi24.ap_enable", category: "Wi-Fi 2,4 GHz", label: "Ponto de acesso habilitado", path: "Device.WiFi.AccessPoint.1.Enable" },
+  { id: "wifi24.security", category: "Wi-Fi 2,4 GHz", label: "Segurança Wi-Fi", path: "Device.WiFi.AccessPoint.1.Security.ModeEnabled", optionsPath: "Device.WiFi.AccessPoint.1.Security.ModesSupported" },
+  { id: "wifi24.password", category: "Wi-Fi 2,4 GHz", label: "Senha do Wi-Fi 2,4 GHz", path: "Device.WiFi.AccessPoint.1.Security.PreSharedKey", sensitive: true },
+  // Wi-Fi 5 GHz
+  { id: "wifi5.radio", category: "Wi-Fi 5 GHz", label: "Rádio 5 GHz habilitado", path: "Device.WiFi.Radio.2.Enable" },
+  { id: "wifi5.auto", category: "Wi-Fi 5 GHz", label: "Seleção automática de canal", path: "Device.WiFi.Radio.2.AutoChannelEnable" },
+  { id: "wifi5.channel", category: "Wi-Fi 5 GHz", label: "Canal 5 GHz", path: "Device.WiFi.Radio.2.Channel", optionsPath: "Device.WiFi.Radio.2.PossibleChannels" },
+  { id: "wifi5.bandwidth", category: "Wi-Fi 5 GHz", label: "Largura do canal 5 GHz", path: "Device.WiFi.Radio.2.OperatingChannelBandwidth", optionsPath: "Device.WiFi.Radio.2.SupportedOperatingChannelBandwidths" },
+  { id: "wifi5.standards", category: "Wi-Fi 5 GHz", label: "Padrões Wi-Fi 5 GHz", path: "Device.WiFi.Radio.2.OperatingStandards" },
+  { id: "wifi5.power", category: "Wi-Fi 5 GHz", label: "Potência de transmissão 5 GHz", path: "Device.WiFi.Radio.2.TransmitPower", optionsPath: "Device.WiFi.Radio.2.TransmitPowerSupported" },
+  { id: "wifi5.ssid_enable", category: "Wi-Fi 5 GHz", label: "SSID principal habilitado", path: "Device.WiFi.SSID.3.Enable" },
+  { id: "wifi5.ssid", category: "Wi-Fi 5 GHz", label: "Nome do Wi-Fi 5 GHz", path: "Device.WiFi.SSID.3.SSID" },
+  { id: "wifi5.ap_enable", category: "Wi-Fi 5 GHz", label: "Ponto de acesso habilitado", path: "Device.WiFi.AccessPoint.3.Enable" },
+  { id: "wifi5.security", category: "Wi-Fi 5 GHz", label: "Segurança Wi-Fi", path: "Device.WiFi.AccessPoint.3.Security.ModeEnabled", optionsPath: "Device.WiFi.AccessPoint.3.Security.ModesSupported" },
+  { id: "wifi5.password", category: "Wi-Fi 5 GHz", label: "Senha do Wi-Fi 5 GHz", path: "Device.WiFi.AccessPoint.3.Security.PreSharedKey", sensitive: true },
+  // Guest SSIDs/APs
+  { id: "guest24.ssid_enable", category: "Wi-Fi convidado", label: "SSID convidado 2,4 GHz habilitado", path: "Device.WiFi.SSID.2.Enable" },
+  { id: "guest24.ssid", category: "Wi-Fi convidado", label: "Nome do Wi-Fi convidado 2,4 GHz", path: "Device.WiFi.SSID.2.SSID" },
+  { id: "guest24.ap_enable", category: "Wi-Fi convidado", label: "Ponto de acesso convidado 2,4 GHz habilitado", path: "Device.WiFi.AccessPoint.2.Enable" },
+  { id: "guest24.security", category: "Wi-Fi convidado", label: "Segurança do Wi-Fi convidado 2,4 GHz", path: "Device.WiFi.AccessPoint.2.Security.ModeEnabled", optionsPath: "Device.WiFi.AccessPoint.2.Security.ModesSupported" },
+  { id: "guest24.password", category: "Wi-Fi convidado", label: "Senha do Wi-Fi convidado 2,4 GHz", path: "Device.WiFi.AccessPoint.2.Security.PreSharedKey", sensitive: true },
+  { id: "guest5.ssid_enable", category: "Wi-Fi convidado", label: "SSID convidado 5 GHz habilitado", path: "Device.WiFi.SSID.4.Enable" },
+  { id: "guest5.ssid", category: "Wi-Fi convidado", label: "Nome do Wi-Fi convidado 5 GHz", path: "Device.WiFi.SSID.4.SSID" },
+  { id: "guest5.ap_enable", category: "Wi-Fi convidado", label: "Ponto de acesso convidado 5 GHz habilitado", path: "Device.WiFi.AccessPoint.4.Enable" },
+  { id: "guest5.security", category: "Wi-Fi convidado", label: "Segurança do Wi-Fi convidado 5 GHz", path: "Device.WiFi.AccessPoint.4.Security.ModeEnabled", optionsPath: "Device.WiFi.AccessPoint.4.Security.ModesSupported" },
+  { id: "guest5.password", category: "Wi-Fi convidado", label: "Senha do Wi-Fi convidado 5 GHz", path: "Device.WiFi.AccessPoint.4.Security.PreSharedKey", sensitive: true },
+  // LAN / DHCP
+  { id: "lan.ip", category: "LAN / DHCP", label: "Endereço IP LAN", path: "Device.IP.Interface.1.IPv4Address.1.IPAddress", critical: true },
+  { id: "lan.mask", category: "LAN / DHCP", label: "Máscara de sub-rede LAN", path: "Device.IP.Interface.1.IPv4Address.1.SubnetMask", critical: true },
+  { id: "lan.mtu", category: "LAN / DHCP", label: "MTU da interface LAN", path: "Device.IP.Interface.1.MaxMTUSize", critical: true },
+  { id: "dhcp.enable", category: "LAN / DHCP", label: "Servidor DHCP habilitado", path: "Device.DHCPv4.Server.Enable", critical: true },
+  { id: "dhcp.pool_enable", category: "LAN / DHCP", label: "Pool DHCP habilitado", path: "Device.DHCPv4.Server.Pool.1.Enable", critical: true },
+  { id: "dhcp.start", category: "LAN / DHCP", label: "Primeiro IP do DHCP", path: "Device.DHCPv4.Server.Pool.1.MinAddress", critical: true },
+  { id: "dhcp.end", category: "LAN / DHCP", label: "Último IP do DHCP", path: "Device.DHCPv4.Server.Pool.1.MaxAddress", critical: true },
+  { id: "dhcp.mask", category: "LAN / DHCP", label: "Máscara do pool DHCP", path: "Device.DHCPv4.Server.Pool.1.SubnetMask", critical: true },
+  { id: "dhcp.dns", category: "LAN / DHCP", label: "DNS distribuído pelo DHCP", path: "Device.DHCPv4.Server.Pool.1.DNSServers", critical: true },
+  { id: "dhcp.lease", category: "LAN / DHCP", label: "Tempo da concessão DHCP (segundos)", path: "Device.DHCPv4.Server.Pool.1.LeaseTime", critical: true },
+  // VLAN and ACS management
+  { id: "vlan.enable", category: "VLAN", label: "VLAN de terminação habilitada", path: "Device.Ethernet.VLANTermination.1.Enable", critical: true },
+  { id: "vlan.id", category: "VLAN", label: "ID da VLAN de terminação", path: "Device.Ethernet.VLANTermination.1.VLANID", critical: true },
+  { id: "mgmt.cwmp", category: "TR-069 / ACS", label: "TR-069 (CWMP) habilitado", path: "Device.ManagementServer.EnableCWMP", critical: true },
+  { id: "mgmt.url", category: "TR-069 / ACS", label: "URL do ACS", path: "Device.ManagementServer.URL", critical: true },
+  { id: "mgmt.username", category: "TR-069 / ACS", label: "Usuário de autenticação ACS", path: "Device.ManagementServer.Username", critical: true },
+  { id: "mgmt.password", category: "TR-069 / ACS", label: "Senha de autenticação ACS", path: "Device.ManagementServer.Password", sensitive: true, critical: true },
+  { id: "mgmt.periodic", category: "TR-069 / ACS", label: "Inform periódico habilitado", path: "Device.ManagementServer.PeriodicInformEnable", critical: true },
+  { id: "mgmt.interval", category: "TR-069 / ACS", label: "Intervalo do Inform (segundos)", path: "Device.ManagementServer.PeriodicInformInterval", critical: true },
+  { id: "mgmt.connection_user", category: "TR-069 / ACS", label: "Usuário Connection Request", path: "Device.ManagementServer.ConnectionRequestUsername", critical: true },
+  { id: "mgmt.connection_password", category: "TR-069 / ACS", label: "Senha Connection Request", path: "Device.ManagementServer.ConnectionRequestPassword", sensitive: true, critical: true },
+  { id: "mgmt.stun", category: "TR-069 / ACS", label: "STUN habilitado", path: "Device.ManagementServer.STUNEnable", critical: true },
+  { id: "mgmt.stun_server", category: "TR-069 / ACS", label: "Servidor STUN", path: "Device.ManagementServer.STUNServerAddress", critical: true },
+  { id: "mgmt.stun_port", category: "TR-069 / ACS", label: "Porta STUN", path: "Device.ManagementServer.STUNServerPort", critical: true },
 ];
 
 function modelCatalogFor(device) {
@@ -619,15 +669,13 @@ function catalogSnapshot(device) {
   const byPath = new Map(values.map((item) => [item.path, item]));
   return modelCatalogFor(device).map((candidate) => {
     const live = byPath.get(candidate.path) || null;
-    return {
-      ...candidate,
-      discovered: Boolean(live),
-      writable: live?.writable === true,
-      type: live?.type || null,
-      value: redactValue(live?.value ?? null, candidate.sensitive),
-      timestamp: live?.timestamp || null,
-      valueAvailable: Boolean(live),
-    };
+    const optionValue = candidate.optionsPath ? byPath.get(candidate.optionsPath)?.value : null;
+    const options = Array.isArray(candidate.options) ? candidate.options
+      : typeof optionValue === "string" ? optionValue.split(",").map((item) => item.trim()).filter(Boolean) : null;
+    return { ...candidate, discovered: Boolean(live), writable: live?.writable === true,
+      type: live?.type || null, value: redactValue(live?.value ?? null, candidate.sensitive),
+      sensitive: Boolean(candidate.sensitive || live?.sensitive), timestamp: live?.timestamp || null,
+      valueAvailable: Boolean(live), options };
   });
 }
 
@@ -683,6 +731,22 @@ async function reconcileLabRuns(deviceId, device) {
       await pool.query(
         `update lab_runs set status='confirmed', observed_value=$1::jsonb, task_result=$2::jsonb where id=$3`,
         [JSON.stringify(observedValue), JSON.stringify({ ...(run.task_result || {}), reconciled: true, reconciled_at: new Date().toISOString() }), run.id]
+      );
+    } else if (run.test_type === "write" && (parameterRefreshedAfterTask || informedAfterTask)) {
+      const candidate = modelCatalogFor(device).find((item) => item.path === run.parameter_path);
+      const expected = run.requested_value;
+      const observedValue = live ? redactValue(live.value, candidate?.sensitive) : null;
+      const confirmed = Boolean(live) && (candidate?.sensitive || normalizeProvisionValue(live.value) === normalizeProvisionValue(expected));
+      // A secret value is never stored or compared; a later Inform only confirms CPE contact.
+      const nextStatus = candidate?.sensitive ? "executed" : confirmed ? "confirmed" : "partial";
+      await pool.query(
+        `update lab_runs set status=$1, observed_value=$2::jsonb, task_result=$3::jsonb where id=$4`,
+        [nextStatus, JSON.stringify(observedValue), JSON.stringify({ ...(run.task_result || {}), reconciled: true, reconciled_at: new Date().toISOString(), secretValueReadBack: candidate?.sensitive ? false : undefined }), run.id]
+      );
+    } else if (run.test_type === "reboot" && informedAfterTask) {
+      await pool.query(
+        `update lab_runs set status='executed', observed_value=$1::jsonb, task_result=$2::jsonb where id=$3`,
+        [JSON.stringify({ lastInform: device._lastInform || null }), JSON.stringify({ ...(run.task_result || {}), rebootObserved: true, reconciled_at: new Date().toISOString() }), run.id]
       );
     }
   }
@@ -1144,9 +1208,15 @@ app.get("/api/acs/devices/:deviceId/lab", async (req, res) => {
           ? "tarefa enfileirada no ACS; aguardando novo Inform do CPE"
           : run.test_type === "write-probe"
             ? "write-probe confirmado após Inform; isso não prova sozinho persistência após reboot/reset"
-            : run.test_type === "read"
-              ? (live ? "leitura executada; valor confirmado no cache após a tarefa" : "leitura executada, mas o parâmetro não foi encontrado no cache")
-              : "refresh executado; novo Inform recebido do CPE",
+            : run.test_type === "write"
+              ? (modelCatalogFor(device).find((item) => item.path === run.parameter_path)?.sensitive
+                  ? "Inform observado; o parâmetro é secreto e não é lido de volta pelo histórico"
+                  : run.status === "confirmed" ? "valor não secreto conferido no cache após Inform" : run.status === "partial" ? "o valor observado diverge do solicitado; confira o CPE" : "tarefa enviada; aguardando confirmação no cache do CPE")
+              : run.test_type === "reboot"
+                ? "solicitação de reinicialização; confirme o retorno do CPE após o boot"
+                : run.test_type === "read"
+                  ? (live ? "leitura executada; valor confirmado no cache após a tarefa" : "leitura executada, mas o parâmetro não foi encontrado no cache")
+                  : "refresh executado; novo Inform recebido do CPE",
       };
     });
     res.json({
@@ -1271,6 +1341,117 @@ app.post("/api/acs/devices/:deviceId/lab/write-probe", async (req, res) => {
     res.status(result.status === 202 ? 202 : 200).json({ ok: true, status, runId: run.id, path: pathValue, requestedValue: redactValue(live.value, candidate.sensitive), observedValue, result: result.data });
   } catch (e) {
     res.status(502).json({ ok: false, error: "Falha ao executar write-probe", details: e.details || e.message });
+  }
+});
+
+function isValidIpv4(value) {
+  const parts = String(value).split(".");
+  return parts.length === 4 && parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) >= 0 && Number(part) <= 255);
+}
+function isValidSubnetMask(value) {
+  if (!isValidIpv4(value)) return false;
+  const n = String(value).split(".").map(Number).reduce((acc, part) => acc * 256 + part, 0) >>> 0;
+  const inv = (~n) >>> 0;
+  return (inv & (inv + 1)) === 0;
+}
+function catalogValidationError(candidate, value, byPath) {
+  const pathValue = candidate.path;
+  if (Array.isArray(candidate.options) && candidate.options.length && !candidate.options.includes(String(value))) {
+    return `Valor inválido para ${candidate.label}. Valores aceitos: ${candidate.options.join(", ")}.`;
+  }
+  if (candidate.optionsPath) {
+    const supported = String(byPath.get(candidate.optionsPath)?.value || "").split(",").map((v) => v.trim()).filter(Boolean);
+    if (supported.length && !supported.includes(String(value))) return `Valor inválido para ${candidate.label}. Valores suportados: ${supported.join(", ")}.`;
+  }
+  if (/\.SSID$/.test(pathValue) && (String(value).length < 1 || String(value).length > 32)) return "O nome da rede Wi-Fi deve ter de 1 a 32 caracteres.";
+  if (/PreSharedKey$/.test(pathValue) && (String(value).length < 8 || String(value).length > 63)) return "A senha Wi-Fi deve ter entre 8 e 63 caracteres.";
+  if (pathValue === "Device.PPP.Interface.1.Username" && (!String(value).trim() || String(value).length > 180)) return "Informe um usuário PPPoE de até 180 caracteres.";
+  if (pathValue === "Device.PPP.Interface.1.Password" && (!String(value) || String(value).length > 256)) return "Informe a senha PPPoE (máximo 256 caracteres).";
+  if (pathValue === "Device.PPP.Interface.1.MaxMRUSize" && (!Number.isInteger(value) || value < 576 || value > 1492)) return "MRU PPPoE deve ser um inteiro entre 576 e 1492.";
+  if (pathValue.endsWith(".IPv4Address.1.IPAddress") || pathValue.endsWith(".MinAddress") || pathValue.endsWith(".MaxAddress")) if (!isValidIpv4(value)) return "Informe um endereço IPv4 válido.";
+  if (pathValue.endsWith(".SubnetMask") && !isValidSubnetMask(value)) return "Informe uma máscara IPv4 válida e contínua.";
+  if (/DNSServers$/.test(pathValue) && String(value).trim()) {
+    const items = String(value).split(",").map((v) => v.trim());
+    if (items.some((item) => !isValidIpv4(item))) return "Informe endereços IPv4 separados por vírgula para os servidores DNS.";
+  }
+  if (pathValue === "Device.Ethernet.VLANTermination.1.VLANID" && (!Number.isInteger(value) || value < 0 || value > 4094)) return "O VLAN ID deve estar entre 0 e 4094.";
+  if (pathValue === "Device.ManagementServer.URL") {
+    try { const url = new URL(String(value)); if (!['http:', 'https:'].includes(url.protocol)) return "A URL do ACS deve usar HTTP ou HTTPS."; }
+    catch { return "Informe uma URL válida para o ACS."; }
+  }
+  if (pathValue === "Device.ManagementServer.PeriodicInformInterval" && (!Number.isInteger(value) || value < 30 || value > 86400)) return "O intervalo de Inform deve estar entre 30 e 86400 segundos.";
+  if (pathValue === "Device.DHCPv4.Server.Pool.1.LeaseTime" && (!Number.isInteger(value) || value < 60 || value > 604800)) return "A concessão DHCP deve estar entre 60 e 604800 segundos.";
+  if (/\.TransmitPower$/.test(pathValue) && (!Number.isInteger(value) || ![25, 50, 100].includes(value))) return "A potência deve corresponder a um dos níveis reportados pelo equipamento.";
+  if (pathValue.endsWith(".MaxMTUSize") && (!Number.isInteger(value) || value < 576 || value > 1500)) return "MTU deve estar entre 576 e 1500.";
+  if (typeof value === "string" && (value.length > 1024 || value.includes(String.fromCharCode(0)))) return "O valor ultrapassa o limite permitido.";
+  return null;
+}
+
+app.post("/api/acs/devices/:deviceId/lab/write", async (req, res) => {
+  try {
+    const deviceId = String(req.params.deviceId || "");
+    const pathValue = String(req.body?.path || "").trim();
+    const rawValue = req.body?.value;
+    if (!pathValue || rawValue === undefined || rawValue === null) return res.status(400).json({ error: "path e value são obrigatórios." });
+    const devices = await nbiFetch(`/devices/?query=${encodeURIComponent(JSON.stringify({ _id: deviceId }))}`);
+    const device = Array.isArray(devices) ? devices[0] : null;
+    if (!device) return res.status(404).json({ error: "CPE não encontrado no GenieACS." });
+    const identity = device._deviceId || {};
+    const candidate = modelCatalogFor(device).find((item) => item.path === pathValue);
+    if (!candidate) return res.status(422).json({ error: "Parâmetro fora do catálogo de controle validado para este modelo." });
+    if (candidate.critical && req.body?.confirmCritical !== true) return res.status(400).json({ error: "Esta alteração pode interromper o acesso ao CPE; confirmação explícita obrigatória." });
+    if (connectionState(device._lastInform || null) !== "online") return res.status(409).json({ error: "CPE sem Inform recente. Atualize a comunicação com o GenieACS antes de gravar." });
+    const values = flattenDevice(device);
+    const byPath = new Map(values.map((item) => [item.path, item]));
+    const live = byPath.get(pathValue);
+    if (!live) return res.status(409).json({ error: "O parâmetro ainda não está no cache do CPE. Execute RefreshObject e tente novamente." });
+    if (live.writable !== true) return res.status(409).json({ error: "O firmware reportou este parâmetro como não gravável; o RFN não tentará forçar a alteração." });
+    let value;
+    const type = String(live.type || "xsd:string");
+    if (type === "xsd:boolean") {
+      if (typeof rawValue === "boolean") value = rawValue;
+      else if (rawValue === "true" || rawValue === "false") value = rawValue === "true";
+      else return res.status(400).json({ error: "Use true ou false para este parâmetro." });
+    } else if (/xsd:(unsignedInt|int|short|unsignedShort|byte|unsignedByte)$/.test(type)) {
+      value = typeof rawValue === "number" ? rawValue : Number(rawValue);
+      if (!Number.isSafeInteger(value)) return res.status(400).json({ error: "Informe um número inteiro válido." });
+      if (/unsigned/.test(type) && value < 0) return res.status(400).json({ error: "Este parâmetro não aceita valor negativo." });
+    } else {
+      if (typeof rawValue !== "string") return res.status(400).json({ error: "Informe texto para este parâmetro." });
+      value = rawValue;
+    }
+    const error = catalogValidationError(candidate, value, byPath);
+    if (error) return res.status(400).json({ error });
+    const task = { name: "setParameterValues", parameterValues: [[pathValue, value, type]] };
+    const result = await nbiRequest(`/devices/${encodeURIComponent(deviceId)}/tasks?timeout=5000&connection_request`, { method: "POST", body: JSON.stringify(task) });
+    const status = result.status === 200 ? "executed" : "queued";
+    const run = await insertLabRun({ deviceId, manufacturer: identity._Manufacturer || null, model: identity._ProductClass || null,
+      testType: "write", parameterPath: pathValue, requestedValue: candidate.sensitive ? "[redacted]" : value,
+      observedValue: null, taskResult: safeTaskMetadata(result.data), status });
+    res.status(result.status === 202 ? 202 : 200).json({ ok: true, status, runId: run.id, path: pathValue,
+      requestedValue: candidate.sensitive ? "[redacted]" : value, secretValueReadBack: candidate.sensitive ? false : undefined,
+      result: safeTaskMetadata(result.data) });
+  } catch (e) {
+    res.status(502).json({ ok: false, error: "Falha ao aplicar parâmetro no CPE", details: e.details || e.message });
+  }
+});
+
+app.post("/api/acs/devices/:deviceId/lab/reboot", async (req, res) => {
+  try {
+    const deviceId = String(req.params.deviceId || "");
+    if (req.body?.confirmCritical !== true) return res.status(400).json({ error: "Confirmação explícita obrigatória para reiniciar o CPE." });
+    const devices = await nbiFetch(`/devices/?query=${encodeURIComponent(JSON.stringify({ _id: deviceId }))}`);
+    const device = Array.isArray(devices) ? devices[0] : null;
+    if (!device) return res.status(404).json({ error: "CPE não encontrado no GenieACS." });
+    if (!modelCatalogFor(device).length) return res.status(422).json({ error: "Reinicialização remota só está habilitada para modelos com catálogo validado." });
+    if (connectionState(device._lastInform || null) !== "online") return res.status(409).json({ error: "CPE sem Inform recente; reinicialização remota bloqueada." });
+    const result = await nbiRequest(`/devices/${encodeURIComponent(deviceId)}/tasks?timeout=5000&connection_request`, { method: "POST", body: JSON.stringify({ name: "reboot" }) });
+    const status = result.status === 200 ? "executed" : "queued";
+    const run = await insertLabRun({ deviceId, manufacturer: device?._deviceId?._Manufacturer || null, model: device?._deviceId?._ProductClass || null,
+      testType: "reboot", taskResult: safeTaskMetadata(result.data), status });
+    res.status(result.status === 202 ? 202 : 200).json({ ok: true, status, runId: run.id, result: safeTaskMetadata(result.data) });
+  } catch (e) {
+    res.status(502).json({ ok: false, error: "Falha ao solicitar reinicialização do CPE", details: e.details || e.message });
   }
 });
 

@@ -419,7 +419,7 @@ function equipmentActions(id, acsId) {
   const customerOptions = `<option value="">Sem cliente associado</option>${customers.map(c => `<option value="${c.id}" ${String(c.id) === String(e.customer_id) ? 'selected' : ''}>${esc(c.name)}${c.document ? ` — ${esc(c.document)}` : ''}</option>`).join('')}`;
   const identity = `<div class="device-head"><div><h2 style="margin:0">${esc(e.manufacturer)} ${esc(e.model)}</h2><div class="hint">Serial <span class="mono">${esc(e.serial_number)}</span></div></div><span class="badge ${e.status === 'online' ? 'online' : 'unknown'}">${esc(e.status)}</span></div>`;
   currentDeviceModal = { id, acsId: acsId || '', tab: 'info' };
-  openModal(`${identity}<p class="hint">ACS ID: <span class="mono">${esc(acsId || 'não vinculado')}</span></p><div id="deviceOperationalSummary"><div class="card" style="margin-top:10px"><div class="hint">Carregando estado operacional do GenieACS...</div></div></div><div class="device-tabs"><button class="device-tab active" onclick="showDeviceTab('info',this,${id},'${esc(acsId || '')}')">Informações</button><button class="device-tab" onclick="showDeviceTab('params',this,${id},'${esc(acsId || '')}')">Parâmetros</button><button class="device-tab" onclick="showDeviceTab('wifi',this,${id},'${esc(acsId || '')}')">Wi-Fi</button><button class="device-tab" onclick="showDeviceTab('wan',this,${id},'${esc(acsId || '')}')">WAN</button><button class="device-tab" onclick="showDeviceTab('tr069',this,${id},'${esc(acsId || '')}')">TR-069</button><button class="device-tab" onclick="showDeviceTab('provision',this,${id},'${esc(acsId || '')}')">Provisionamento</button><button class="device-tab" onclick="showDeviceTab('lab',this,${id},'${esc(acsId || '')}')">Laboratório MR60X</button></div><div id="deviceTabBody"><div class="card"><div class="hint">Carregando dados do equipamento...</div></div></div><div class="device-actions"><div><label>Cliente responsável</label><select id="eCustomer">${customerOptions}</select><div class="hint">Vincula o cadastro e atualiza as ativações antigas ainda sem cliente.</div></div><div><label>Perfil</label><select id="eProfile"><option value="">Sem perfil</option>${options}</select></div><div class="actions" style="grid-column:1/-1"><button onclick="assignCustomer(${id})">Associar cliente</button><button onclick="assignProfile(${id})">Associar perfil</button>${acsId ? `<button class="ok" onclick="applyProfile('${esc(acsId)}')">Aplicar perfil</button><button class="secondary" onclick="refreshDevice('${esc(acsId)}')">Atualizar do CPE</button>` : ''}</div></div>`);
+  openModal(`${identity}<p class="hint">ACS ID: <span class="mono">${esc(acsId || 'não vinculado')}</span></p><div id="deviceOperationalSummary"><div class="card" style="margin-top:10px"><div class="hint">Carregando estado operacional do GenieACS...</div></div></div><div class="device-tabs"><button class="device-tab active" onclick="showDeviceTab('info',this,${id},'${esc(acsId || '')}')">Informações</button><button class="device-tab" onclick="showDeviceTab('params',this,${id},'${esc(acsId || '')}')">Parâmetros</button><button class="device-tab" onclick="showDeviceTab('wifi',this,${id},'${esc(acsId || '')}')">Wi-Fi</button><button class="device-tab" onclick="showDeviceTab('wan',this,${id},'${esc(acsId || '')}')">WAN</button><button class="device-tab" onclick="showDeviceTab('tr069',this,${id},'${esc(acsId || '')}')">TR-069</button><button class="device-tab" onclick="showDeviceTab('provision',this,${id},'${esc(acsId || '')}')">Provisionamento</button><button class="device-tab" onclick="showDeviceTab('lab',this,${id},'${esc(acsId || '')}')">Controle do equipamento</button></div><div id="deviceTabBody"><div class="card"><div class="hint">Carregando dados do equipamento...</div></div></div><div class="device-actions"><div><label>Cliente responsável</label><select id="eCustomer">${customerOptions}</select><div class="hint">Vincula o cadastro e atualiza as ativações antigas ainda sem cliente.</div></div><div><label>Perfil</label><select id="eProfile"><option value="">Sem perfil</option>${options}</select></div><div class="actions" style="grid-column:1/-1"><button onclick="assignCustomer(${id})">Associar cliente</button><button onclick="assignProfile(${id})">Associar perfil</button>${acsId ? `<button class="ok" onclick="applyProfile('${esc(acsId)}')">Aplicar perfil</button><button class="secondary" onclick="refreshDevice('${esc(acsId)}')">Atualizar do CPE</button>` : ''}</div></div>`);
   if (acsId) {
     loadDeviceParameters(id, acsId, 'info');
   } else showDeviceEmpty('Este equipamento não está vinculado a um dispositivo do GenieACS.');
@@ -904,21 +904,89 @@ async function assignCustomer(id) {
 async function assignProfile(id) { try { await api(`/api/equipment/${id}`, { method: 'PATCH', body: JSON.stringify({ profile_id: $('eProfile').value || null }) }); closeModal(); showStatus('Perfil associado.'); await loadAll(); } catch (e) { showStatus(e.message, false); } }
 async function applyProfile(acsId) { try { const e = equipment.find(x => x.acs_device_id === acsId); if (!e?.profile_id) throw new Error('Associe um perfil antes de aplicar.'); await api(`/api/acs/devices/${encodeURIComponent(acsId)}/apply-profile`, { method: 'POST', body: JSON.stringify({ profile_id: e.profile_id }) }); showStatus('Perfil enviado ao GenieACS/CPE.'); } catch (e) { showStatus(e.message, false); } }
 async function renderMr60xLab(acsId) {
-  $('deviceTabBody').innerHTML = '<div class="card"><div class="hint">Consultando laboratório determinístico do modelo...</div></div>';
+  $('deviceTabBody').innerHTML = '<div class="card"><div class="hint">Consultando catálogo de controle do MR60X...</div></div>';
   try {
     const d = await api(`/api/acs/devices/${encodeURIComponent(acsId)}/lab`);
-    const badge = d.supported ? '<span class="badge online">Catálogo MR60X ativo</span>' : '<span class="badge unknown">Modelo sem catálogo</span>'; const conn = d.connection?.state === 'online' ? '<span class="badge online">CPE online</span>' : '<span class="badge unknown">Sem Inform recente</span>';
+    const badge = d.supported ? '<span class="badge online">Catálogo MR60X ativo</span>' : '<span class="badge unknown">Modelo sem catálogo</span>';
+    const conn = d.connection?.state === 'online' ? '<span class="badge online">CPE online</span>' : '<span class="badge unknown">Sem Inform recente</span>';
+    const categories = [...new Set((d.candidates || []).map(c => c.category))];
+    const categoryFilter = `<select id="labCategoryFilter" onchange="filterLabParameters()" style="max-width:260px"><option value="">Todas as categorias</option>${categories.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select>`;
     const candidates = (d.candidates || []).map(c => {
-      const value = c.sensitive ? (c.discovered ? '[redacted]' : '—') : (c.discovered ? esc(c.value) : '—');
-      const writable = c.discovered ? (c.writable ? 'gravável' : 'somente leitura') : 'não observado';
-      const probe = c.safeProbe && c.discovered && c.writable ? `<button class="secondary" onclick="labWriteProbe('${esc(acsId)}','${esc(c.path)}')">Write-probe</button>` : '';
-      const read = c.discovered ? `<button class="secondary" onclick="labRead('${esc(acsId)}','${esc(c.path)}')">Ler</button>` : '';
-      return `<div class="kv" style="gap:10px;align-items:flex-start"><div style="min-width:0;flex:1"><b>${esc(c.label)}</b><div class="hint mono">${esc(c.path)}</div><div class="hint">${writable} · tipo ${esc(c.type || '—')} · valor ${value}</div></div><div class="actions">${read}${probe}</div></div>`;
+      const fieldId = `labValue_${c.id.replace(/[^A-Za-z0-9_-]/g, '_')}`;
+      const value = c.sensitive ? '' : (c.discovered ? String(c.value ?? '') : '');
+      const currentLabel = c.sensitive ? (c.discovered ? '•••••••• (valor oculto)' : 'não observado') : (c.discovered ? esc(c.value ?? '—') : 'não observado');
+      const writableLabel = c.discovered ? (c.writable ? 'gravável' : 'somente leitura no firmware') : 'não observado no cache';
+      const disabled = !(c.discovered && c.writable);
+      let input;
+      if (c.discovered && c.writable && c.type === 'xsd:boolean') {
+        const boolValue = String(c.value).toLowerCase() === 'true';
+        input = `<select id="${fieldId}" data-lab-kind="boolean" ${disabled ? 'disabled' : ''}><option value="true" ${boolValue ? 'selected' : ''}>Habilitado (true)</option><option value="false" ${!boolValue ? 'selected' : ''}>Desabilitado (false)</option></select>`;
+      } else if (c.discovered && c.writable && Array.isArray(c.options) && c.options.length) {
+        const opts = c.options.map(o => `<option value="${esc(o)}" ${String(o) === String(c.value) ? 'selected' : ''}>${esc(o)}</option>`).join('');
+        const current = !c.sensitive && !c.options.map(String).includes(String(c.value)) ? `<option value="${esc(c.value)}" selected>${esc(c.value)}</option>` : '';
+        input = `<select id="${fieldId}" data-lab-kind="string">${opts}${current}</select>`;
+      } else {
+        const numeric = c.discovered && c.writable && /xsd:(unsignedInt|int|short|unsignedShort|byte|unsignedByte)$/.test(c.type || '');
+        const type = c.sensitive ? 'password' : numeric ? 'number' : 'text';
+        const placeholder = c.sensitive ? 'Digite o novo valor (não exibido)' : disabled ? 'Parâmetro indisponível para gravação' : 'Novo valor';
+        input = `<input id="${fieldId}" type="${type}" data-lab-kind="${numeric ? 'number' : 'string'}" value="${esc(value)}" placeholder="${esc(placeholder)}" ${disabled ? 'disabled' : ''} autocomplete="${c.sensitive ? 'new-password' : 'off'}">`;
+      }
+      const read = c.discovered ? `<button type="button" class="secondary" onclick="labRead('${esc(acsId)}','${esc(c.path)}')">Ler</button>` : '';
+      const probe = c.safeProbe && c.discovered && c.writable ? `<button type="button" class="secondary" onclick="labWriteProbe('${esc(acsId)}','${esc(c.path)}')">Reenviar valor atual</button>` : '';
+      const apply = !disabled ? `<button type="button" class="ok" onclick="labApplyParameter('${esc(acsId)}','${esc(c.id)}','${esc(c.path)}','${esc(c.label)}','${esc(c.category)}','${esc(fieldId)}',${c.critical ? 'true' : 'false'},${c.sensitive ? 'true' : 'false'})">Aplicar</button>` : '';
+      const search = `${c.category} ${c.label} ${c.path}`.toLowerCase();
+      return `<div class="card lab-control-item" data-lab-search="${esc(search)}" data-lab-category="${esc(c.category)}" style="padding:12px;margin:0"><div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap"><div style="min-width:240px;flex:1"><b>${esc(c.label)}</b><div class="hint mono" style="overflow-wrap:anywhere">${esc(c.path)}</div><div class="hint">${esc(c.category)} · ${writableLabel} · tipo ${esc(c.type || '—')}</div><div class="hint">Valor atual: ${currentLabel}</div></div><div style="min-width:min(360px,100%);flex:1;display:flex;flex-direction:column;gap:8px">${input}<div class="actions">${read}${probe}${apply}</div></div></div></div>`;
     }).join('');
-    const runs = (d.runs || []).map(r => { const badge = r.status === 'executed' || r.status === 'confirmed' ? 'online' : 'unknown'; return `<tr><td>${esc(r.id)}</td><td>${esc(r.test_type)}</td><td class="mono">${esc(r.parameter_path || '—')}</td><td><span class="badge ${badge}">${esc(r.status)}</span></td><td>${esc(r.interpretation || '')}</td><td class="mono">${esc(r.created_at)}</td></tr>`; }).join('') || '<tr><td colspan="6" class="empty">Nenhum teste registrado.</td></tr>';
-    $('deviceTabBody').innerHTML = `<div class="card"><div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap"><div><h3 style="margin:0">Laboratório MR60X</h3><p class="hint">${d.supported ? 'Catálogo exato do MERCUSYS MR60X. Nenhuma busca genérica cria caminho de escrita.' : 'Este modelo ainda não possui catálogo determinístico.'}</p></div><div class="actions"><button onclick="labRefresh('${esc(acsId)}')">RefreshObject</button><button class="secondary" onclick="showDeviceTab('lab',document.querySelector('.device-tab.active'),null,'${esc(acsId)}')">Atualizar resultados</button></div></div><div class="hint-block">${badge} ${conn} Último Inform: <span class="mono">${esc(d.lastInform || '—')}</span></div>${candidates ? `<div class="param-list" style="margin-top:12px">${candidates}</div>` : ''}</div><div class="card" style="margin-top:12px"><h3 style="margin-top:0">Histórico do laboratório</h3><div class="table-wrap"><table><thead><tr><th>ID</th><th>Teste</th><th>Parâmetro</th><th>Status</th><th>Interpretação</th><th>Data</th></tr></thead><tbody>${runs}</tbody></table></div><p class="hint">"queued" significa que o ACS aceitou a tarefa para o próximo Inform. O histórico é reconciliado automaticamente quando o CPE realmente volta a falar com o ACS.</p></div>`;
+    const runs = (d.runs || []).map(r => {
+      const badge = ['executed', 'confirmed'].includes(r.status) ? 'online' : 'unknown';
+      const typeLabel = r.test_type === 'write' ? 'Alteração' : r.test_type === 'reboot' ? 'Reinicialização' : r.test_type === 'write-probe' ? 'Teste de gravação' : r.test_type;
+      const interpretation = r.test_type === 'write' && r.status === 'executed' && r.observed_value === '[redacted]'
+        ? 'Inform observado; valor secreto não pode ser lido de volta' : (r.interpretation || (r.test_type === 'reboot' ? 'Solicitação de reinicialização' : ''));
+      return `<tr><td>${esc(r.id)}</td><td>${esc(typeLabel)}</td><td class="mono">${esc(r.parameter_path || '—')}</td><td><span class="badge ${badge}">${esc(r.status)}</span></td><td>${esc(interpretation)}</td><td class="mono">${esc(r.created_at)}</td></tr>`;
+    }).join('') || '<tr><td colspan="6" class="empty">Nenhuma operação registrada.</td></tr>';
+    $('deviceTabBody').innerHTML = `<div class="card"><div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap"><div><h3 style="margin:0">Controle avançado do equipamento — MR60X</h3><p class="hint">Personalização via GenieACS com catálogo de parâmetros reconhecidos deste modelo. Só permite gravar um parâmetro se o próprio CPE o reportar como gravável.</p></div><div class="actions"><button class="danger" onclick="labReboot('${esc(acsId)}')">Reiniciar roteador</button><button onclick="labRefresh('${esc(acsId)}')">Atualizar parâmetros</button><button class="secondary" onclick="renderMr60xLab('${esc(acsId)}')">Recarregar tela</button></div></div><div class="hint-block">${badge} ${conn} · Último Inform: <span class="mono">${esc(d.lastInform || '—')}</span></div><div class="hint-block" style="border-left:4px solid #c88619;margin-top:10px">Atenção: alterar PPPoE, IP LAN/DHCP, VLAN ou TR-069 pode interromper o acesso. Senhas não são exibidas nem gravadas no histórico. A indicação de parâmetro gravável vem do cache atual; se estiver como “somente leitura”, o RFN não forçará a escrita.</div><div class="two" style="margin-top:12px;align-items:end"><div><label for="labParamSearch">Buscar parâmetro</label><input id="labParamSearch" placeholder="Ex.: SSID, VLAN, DHCP, ACS" oninput="filterLabParameters()"></div><div><label for="labCategoryFilter">Categoria</label>${categoryFilter}</div></div><div id="labAdvancedParams" class="grid" style="grid-template-columns:repeat(auto-fit,minmax(min(100%,460px),1fr));gap:10px;margin-top:12px">${candidates || '<div class="empty">Este modelo não possui catálogo habilitado.</div>'}</div></div><div class="card" style="margin-top:12px"><h3 style="margin-top:0">Histórico de operações do equipamento</h3><div class="table-wrap"><table><thead><tr><th>ID</th><th>Operação</th><th>Parâmetro</th><th>Status</th><th>Interpretação</th><th>Data</th></tr></thead><tbody>${runs}</tbody></table></div><p class="hint">“Confirmado” significa que o valor não secreto foi observado após Inform. Para senhas, o RFN não tenta ler nem armazenar o segredo de volta. “queued” significa que a tarefa foi enfileirada e depende de nova comunicação do CPE.</p></div>`;
+    filterLabParameters();
   } catch (e) { $('deviceTabBody').innerHTML = `<div class="card empty">${esc(e.message)}</div>`; }
 }
+function filterLabParameters() {
+  const q = String($('labParamSearch')?.value || '').trim().toLowerCase();
+  const category = String($('labCategoryFilter')?.value || '');
+  document.querySelectorAll('[data-lab-search]').forEach(item => {
+    const textMatch = !q || String(item.dataset.labSearch || '').includes(q);
+    const categoryMatch = !category || item.dataset.labCategory === category;
+    item.style.display = textMatch && categoryMatch ? '' : 'none';
+  });
+}
+async function labApplyParameter(acsId, candidateId, pathValue, label, category, fieldId, critical, sensitive) {
+  const input = document.getElementById(fieldId);
+  if (!input) return;
+  let value = input.value;
+  if (input.dataset.labKind === 'boolean') value = value === 'true';
+  else if (input.dataset.labKind === 'number') {
+    if (value.trim() === '' || !Number.isSafeInteger(Number(value))) { showStatus('Informe um número inteiro válido.', false); return; }
+    value = Number(value);
+  }
+  if (sensitive && (typeof value !== 'string' || value.length === 0)) { showStatus('Digite o novo segredo antes de aplicar. O valor atual não é exibido.', false); return; }
+  const warning = critical
+    ? `A alteração de “${label}” pode interromper internet, DHCP, rede local ou acesso remoto ao GenieACS.\n\nConfirme que este CPE é o correto e que você tem forma de recuperar o acesso.\n\nAplicar agora?`
+    : `Aplicar “${label}” no MR60X? A alteração pode desconectar aparelhos conectados ao Wi-Fi.`;
+  if (!window.confirm(warning)) return;
+  try {
+    const r = await api(`/api/acs/devices/${encodeURIComponent(acsId)}/lab/write`, { method: 'POST', body: JSON.stringify({ path: pathValue, value, confirmCritical: critical ? true : undefined }) });
+    const status = r.status === 'executed' ? 'aceita/executada pelo ACS' : 'enfileirada para o próximo contato do CPE';
+    showStatus(`Parâmetro “${label}” ${status}. Operação #${r.runId}. ${sensitive ? 'A senha não é exibida nem armazenada.' : 'Atualize os parâmetros após o próximo Inform para conferir o resultado.'}`);
+    await renderMr60xLab(acsId);
+  } catch (e) { showStatus(e.message, false); }
+}
+async function labReboot(acsId) {
+  if (!window.confirm('Reiniciar este roteador agora? A internet e o Wi-Fi serão interrompidos temporariamente. Esta ação não restaura o padrão de fábrica nem apaga a configuração.')) return;
+  try {
+    const r = await api(`/api/acs/devices/${encodeURIComponent(acsId)}/lab/reboot`, { method: 'POST', body: JSON.stringify({ confirmCritical: true }) });
+    showStatus(`Reinicialização ${r.status === 'executed' ? 'solicitada ao CPE' : 'enfileirada no GenieACS'}. Operação #${r.runId}.`);
+    await renderMr60xLab(acsId);
+  } catch (e) { showStatus(e.message, false); }
+}
+
 async function labRefresh(acsId) {
   try { const r = await api(`/api/acs/devices/${encodeURIComponent(acsId)}/lab/refresh`, { method:'POST', body:'{}' }); showStatus(`Refresh ${r.status === 'executed' ? 'executado' : 'enfileirado'}. Teste #${r.runId}.`); } catch(e) { showStatus(e.message,false); }
 }
