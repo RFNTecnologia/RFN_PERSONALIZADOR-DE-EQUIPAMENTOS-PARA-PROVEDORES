@@ -45,8 +45,12 @@
 
     .brand {
       font-size: 20px;
-      font-weight: 800
+      font-weight: 800;
+      overflow-wrap: anywhere
     }
+    .brand-lockup { display:flex; align-items:center; gap:12px; min-width:0; }
+    .brand-logo { display:none; max-width:132px; max-height:48px; width:auto; height:auto; object-fit:contain; background:#fff; border-radius:7px; padding:4px; }
+    .brand-copy { min-width:0; }
 
     .sub {
       color: var(--muted);
@@ -499,9 +503,12 @@
 
 <body>
   <header>
-    <div>
-      <div class="brand">RFN_Personalizar-roteadores</div>
-      <div class="sub">Personalização de Roteadores • ONU • ONT</div>
+    <div class="brand-lockup">
+      <img id="headerBrandLogo" class="brand-logo" alt="Logotipo do provedor">
+      <div class="brand-copy">
+        <div class="brand" id="headerBrandName">RFN_Personalizar-roteadores</div>
+        <div class="sub" id="headerBrandSubtitle">Personalização de Roteadores • ONU • ONT</div>
+      </div>
     </div>
     <div class="actions">
       <div id="acsBadge" class="badge unknown">ACS: verificando...</div><button class="secondary"
@@ -512,7 +519,7 @@
     <div class="toolbar">
       <div>
         <h1 style="margin:0">Central de Equipamentos</h1>
-        <div class="sub">V12.7.0 — Controle Avançado do Equipamento</div>
+        <div class="sub">V12.8.0 — Personalização ISP, Reset e Identidade Visual</div>
       </div>
       <div class="actions"><button onclick="syncACS()">Sincronizar ACS</button><button class="secondary"
           onclick="openCustomerModal()">+ Cliente</button><button class="secondary" onclick="openEquipmentModal()">+ Equipamento</button><button class="secondary" onclick="openProfileModal()">+ Perfil</button></div>
@@ -599,8 +606,12 @@
               <div><label>Nome da empresa</label><input id="ispCompany"></div>
               <div><label>Título da tela do cliente</label><input id="ispPortalTitle"></div>
             </div>
-            <div><label>Logo (URL pública ou data URL)</label><input id="ispLogo" placeholder="https://.../logo.png">
-              <div class="hint">A plataforma usa este endereço no cabeçalho e na visualização de personalização.</div>
+            <div><label>Logo da empresa (URL pública ou arquivo de imagem)</label><input id="ispLogo" placeholder="https://.../logo.png">
+              <div class="two" style="margin-top:8px;align-items:end">
+                <div><label for="ispLogoFile">Enviar logo do computador (PNG, JPEG, WebP ou GIF até 1,5 MB)</label><input id="ispLogoFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif"></div>
+                <div class="actions"><button type="button" class="secondary" onclick="clearProviderLogo()">Remover logo</button></div>
+              </div>
+              <div class="hint">A logo é salva na configuração do provedor e aparece no cabeçalho e na prévia do RFN. Para instalar a logo dentro da página web do roteador e mantê-la após reset, consulte o fluxo oficial ISP Preset/Agile Config do fabricante.</div>
             </div>
             <div class="two">
               <div><label>Telefone de suporte</label><input id="ispPhone"></div>
@@ -634,8 +645,12 @@
             <div class="kv"><span>SSID 2.4 GHz</span><b id="ispPreviewSsid24">—</b></div>
             <div class="kv"><span>SSID 5 GHz</span><b id="ispPreviewSsid5">—</b></div>
           </div>
-          <p class="hint" style="margin-top:12px">A pré-visualização não altera o firmware do roteador. Ela representa a
-            identidade que será usada na plataforma e nos próximos módulos de bootstrap/provisionamento.</p>
+          <p class="hint" style="margin-top:12px">A pré-visualização não altera o firmware do roteador. Ela representa a identidade visual armazenada na plataforma RFN.</p>
+          <div class="hint-block" style="margin-top:14px">
+            <h3 style="margin-top:0">Logo dentro do roteador e personalização persistente após reset</h3>
+            <p>Para colocar logotipo/favicon na página de administração do MERCUSYS e gravar a configuração como padrão de fábrica, use o processo oficial MERCUSYS ISP Preset / Agile Config 2.1 compatível com MR60X V2. GenieACS controla parâmetros TR-069, mas não modifica por si só a interface web do firmware.</p>
+            <a class="button-link" href="https://www.mercusys.com.br/support/isp/" target="_blank" rel="noopener noreferrer">Abrir MERCUSYS ISP Preset / Agile Config</a>
+          </div>
         </div>
       </div>
     </section>

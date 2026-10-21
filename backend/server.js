@@ -235,6 +235,14 @@ app.put("/api/provider-settings", async (req, res, next) => {
   try {
     const { company_name, logo_url, favicon_url, support_phone, support_whatsapp, portal_title, portal_message, default_wifi_ssid, default_wifi_ssid_5g, acs_url, acs_username, connection_request_path, reset_policy } = req.body;
     if (!company_name) return res.status(400).json({ error: "company_name é obrigatório" });
+    const logoSource = String(logo_url || "").trim();
+    if (logoSource.length > 2_200_000) return res.status(413).json({ error: "A logo é muito grande. Use uma imagem de até 1,5 MB ou uma URL pública." });
+    if (logoSource) {
+      const isDataImage = /^data:image\/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/=\r\n]+$/i.test(logoSource);
+      let isHttpUrl = false;
+      try { const parsed = new URL(logoSource); isHttpUrl = parsed.protocol === "http:" || parsed.protocol === "https:"; } catch { /* invalid URL */ }
+      if (!isDataImage && !isHttpUrl) return res.status(400).json({ error: "Logo inválida. Use uma URL HTTP/HTTPS ou imagem PNG, JPEG, WebP ou GIF em base64." });
+    }
     const q = await pool.query(`
       update provider_settings set
         company_name=$1, logo_url=$2, favicon_url=$3, support_phone=$4, support_whatsapp=$5,
@@ -1214,6 +1222,8 @@ app.get("/api/acs/devices/:deviceId/lab", async (req, res) => {
                   : run.status === "confirmed" ? "valor não secreto conferido no cache após Inform" : run.status === "partial" ? "o valor observado diverge do solicitado; confira o CPE" : "tarefa enviada; aguardando confirmação no cache do CPE")
               : run.test_type === "reboot"
                 ? "solicitação de reinicialização; confirme o retorno do CPE após o boot"
+                : run.test_type === "factory-reset"
+                  ? "reset de fábrica solicitado; o ACS pode ser removido e o retorno do CPE não é garantido"
                 : run.test_type === "read"
                   ? (live ? "leitura executada; valor confirmado no cache após a tarefa" : "leitura executada, mas o parâmetro não foi encontrado no cache")
                   : "refresh executado; novo Inform recebido do CPE",
@@ -1222,6 +1232,7 @@ app.get("/api/acs/devices/:deviceId/lab", async (req, res) => {
     res.json({
       deviceId,
       identity,
+      serialNumber: identity._SerialNumber || device?.Device?.DeviceInfo?.SerialNumber?.value || device?.InternetGatewayDevice?.DeviceInfo?.SerialNumber?.value || null,
       supported: catalog.length > 0,
       model: { manufacturer: identity._Manufacturer || null, productClass: identity._ProductClass || null },
       lastInform: device._lastInform || null,
@@ -1452,6 +1463,36 @@ app.post("/api/acs/devices/:deviceId/lab/reboot", async (req, res) => {
     res.status(result.status === 202 ? 202 : 200).json({ ok: true, status, runId: run.id, result: safeTaskMetadata(result.data) });
   } catch (e) {
     res.status(502).json({ ok: false, error: "Falha ao solicitar reinicialização do CPE", details: e.details || e.message });
+  }
+});
+
+app.post("/api/acs/devices/:deviceId/lab/factory-reset", async (req, res) => {
+  try {
+    const deviceId = String(req.params.deviceId || "");
+    if (req.body?.confirmCritical !== true) return res.status(400).json({ error: "Confirmação explícita obrigatória para reset de fábrica." });
+    const devices = await nbiFetch(`/devices/?query=${encodeURIComponent(JSON.stringify({ _id: deviceId }))}`);
+    const device = Array.isArray(devices) ? devices[0] : null;
+    if (!device) return res.status(404).json({ error: "CPE não encontrado no GenieACS." });
+    const identity = device._deviceId || {};
+    const manufacturer = String(identity._Manufacturer || device?.Device?.DeviceInfo?.Manufacturer?.value || "").trim();
+    const productClass = String(identity._ProductClass || device?.Device?.DeviceInfo?.ProductClass?.value || "").trim();
+    const serial = String(identity._SerialNumber || device?.Device?.DeviceInfo?.SerialNumber?.value || "").trim();
+    if (manufacturer.toLowerCase() !== "mercusys" || productClass.toUpperCase() !== "MR60X") {
+      return res.status(422).json({ error: "Reset remoto de fábrica habilitado somente para o modelo MERCUSYS MR60X validado." });
+    }
+    if (!serial || String(req.body?.confirmSerial || "").trim() !== serial) {
+      return res.status(400).json({ error: "O serial digitado não corresponde ao serial atual do CPE. Nenhum reset foi enviado." });
+    }
+    if (!modelCatalogFor(device).length) return res.status(422).json({ error: "Modelo sem catálogo validado para operações remotas." });
+    if (connectionState(device._lastInform || null) !== "online") return res.status(409).json({ error: "CPE sem Inform recente. Atualize a comunicação antes do reset de fábrica." });
+    const result = await nbiRequest(`/devices/${encodeURIComponent(deviceId)}/tasks?timeout=5000&connection_request`, { method: "POST", body: JSON.stringify({ name: "factoryReset" }) });
+    const status = result.status === 200 ? "executed" : "queued";
+    const run = await insertLabRun({ deviceId, manufacturer, model: productClass, testType: "factory-reset", parameterPath: null,
+      requestedValue: { factoryReset: true, serial }, taskResult: safeTaskMetadata(result.data), status });
+    res.status(result.status === 202 ? 202 : 200).json({ ok: true, status, serial, runId: run.id,
+      warning: "O reset de fábrica pode apagar parâmetros ACS e impedir reconexão automática." });
+  } catch (e) {
+    res.status(502).json({ ok: false, error: "Falha ao solicitar reset de fábrica do CPE", details: e.details || e.message });
   }
 });
 

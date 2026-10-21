@@ -351,12 +351,51 @@ function updateProviderPreview() {
   const s24 = $('ispSsid24')?.value || '—'; const s5 = $('ispSsid5')?.value || '—';
   if ($('ispPreviewCompany')) $('ispPreviewCompany').textContent = company;
   if ($('ispPreviewTitle')) $('ispPreviewTitle').textContent = title;
+  applyProviderBranding(company, title, $('ispLogo')?.value?.trim() || '');
   if ($('ispPreviewMessage')) $('ispPreviewMessage').textContent = message;
   if ($('ispPreviewSsid24')) $('ispPreviewSsid24').textContent = s24;
   if ($('ispPreviewSsid5')) $('ispPreviewSsid5').textContent = s5;
   const logo = $('ispPreviewLogo'); const url = $('ispLogo')?.value?.trim();
   if (logo) { if (url) { logo.src = url; logo.style.display = 'block'; logo.onerror = () => { logo.style.display = 'none'; }; } else { logo.removeAttribute('src'); logo.style.display = 'none'; } }
 }
+function applyProviderBranding(companyName, portalTitle, logoUrl) {
+  const name = $('headerBrandName');
+  const subtitle = $('headerBrandSubtitle');
+  const image = $('headerBrandLogo');
+  if (name) name.textContent = String(companyName || '').trim() || 'RFN_Personalizar-roteadores';
+  if (subtitle) subtitle.textContent = String(portalTitle || '').trim() || 'Personalização de Roteadores • ONU • ONT';
+  if (image) {
+    if (logoUrl) {
+      image.onerror = () => { image.style.display = 'none'; };
+      image.onload = () => { image.style.display = 'block'; };
+      image.src = logoUrl;
+    } else {
+      image.removeAttribute('src'); image.style.display = 'none';
+    }
+  }
+}
+function clearProviderLogo() {
+  if ($('ispLogo')) $('ispLogo').value = '';
+  if ($('ispLogoFile')) $('ispLogoFile').value = '';
+  updateProviderPreview();
+}
+function handleProviderLogoUpload(event) {
+  const file = event?.target?.files?.[0];
+  if (!file) return;
+  const allowed = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+  if (!allowed.includes(file.type)) { showStatus('Formato de logo inválido. Use PNG, JPEG, WebP ou GIF.', false); event.target.value = ''; return; }
+  if (file.size > 1.5 * 1024 * 1024) { showStatus('A logo deve ter no máximo 1,5 MB.', false); event.target.value = ''; return; }
+  const reader = new FileReader();
+  reader.onload = () => {
+    if (typeof reader.result !== 'string' || !reader.result.startsWith('data:image/')) { showStatus('Não foi possível ler o arquivo de logo.', false); return; }
+    $('ispLogo').value = reader.result;
+    updateProviderPreview();
+    showStatus('Logo carregada na prévia. Clique em Salvar Personalização ISP para gravar.');
+  };
+  reader.onerror = () => showStatus('Falha ao ler o arquivo de logo.', false);
+  reader.readAsDataURL(file);
+}
+$('ispLogoFile')?.addEventListener('change', handleProviderLogoUpload);
 async function loadProviderSettings() {
   try { providerSettings = await api('/api/provider-settings'); renderProviderSettings(); }
   catch (e) { showStatus(e.message, false); }
@@ -939,12 +978,12 @@ async function renderMr60xLab(acsId) {
     }).join('');
     const runs = (d.runs || []).map(r => {
       const badge = ['executed', 'confirmed'].includes(r.status) ? 'online' : 'unknown';
-      const typeLabel = r.test_type === 'write' ? 'Alteração' : r.test_type === 'reboot' ? 'Reinicialização' : r.test_type === 'write-probe' ? 'Teste de gravação' : r.test_type;
+      const typeLabel = r.test_type === 'write' ? 'Alteração' : r.test_type === 'reboot' ? 'Reinicialização' : r.test_type === 'factory-reset' ? 'Reset de fábrica' : r.test_type === 'write-probe' ? 'Teste de gravação' : r.test_type;
       const interpretation = r.test_type === 'write' && r.status === 'executed' && r.observed_value === '[redacted]'
-        ? 'Inform observado; valor secreto não pode ser lido de volta' : (r.interpretation || (r.test_type === 'reboot' ? 'Solicitação de reinicialização' : ''));
+        ? 'Inform observado; valor secreto não pode ser lido de volta' : (r.interpretation || (r.test_type === 'reboot' ? 'Solicitação de reinicialização' : r.test_type === 'factory-reset' ? 'Reset de fábrica: o CPE pode perder a configuração ACS e não voltar a comunicar automaticamente' : ''));
       return `<tr><td>${esc(r.id)}</td><td>${esc(typeLabel)}</td><td class="mono">${esc(r.parameter_path || '—')}</td><td><span class="badge ${badge}">${esc(r.status)}</span></td><td>${esc(interpretation)}</td><td class="mono">${esc(r.created_at)}</td></tr>`;
     }).join('') || '<tr><td colspan="6" class="empty">Nenhuma operação registrada.</td></tr>';
-    $('deviceTabBody').innerHTML = `<div class="card"><div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap"><div><h3 style="margin:0">Controle avançado do equipamento — MR60X</h3><p class="hint">Personalização via GenieACS com catálogo de parâmetros reconhecidos deste modelo. Só permite gravar um parâmetro se o próprio CPE o reportar como gravável.</p></div><div class="actions"><button class="danger" onclick="labReboot('${esc(acsId)}')">Reiniciar roteador</button><button onclick="labRefresh('${esc(acsId)}')">Atualizar parâmetros</button><button class="secondary" onclick="renderMr60xLab('${esc(acsId)}')">Recarregar tela</button></div></div><div class="hint-block">${badge} ${conn} · Último Inform: <span class="mono">${esc(d.lastInform || '—')}</span></div><div class="hint-block" style="border-left:4px solid #c88619;margin-top:10px">Atenção: alterar PPPoE, IP LAN/DHCP, VLAN ou TR-069 pode interromper o acesso. Senhas não são exibidas nem gravadas no histórico. A indicação de parâmetro gravável vem do cache atual; se estiver como “somente leitura”, o RFN não forçará a escrita.</div><div class="two" style="margin-top:12px;align-items:end"><div><label for="labParamSearch">Buscar parâmetro</label><input id="labParamSearch" placeholder="Ex.: SSID, VLAN, DHCP, ACS" oninput="filterLabParameters()"></div><div><label for="labCategoryFilter">Categoria</label>${categoryFilter}</div></div><div id="labAdvancedParams" class="grid" style="grid-template-columns:repeat(auto-fit,minmax(min(100%,460px),1fr));gap:10px;margin-top:12px">${candidates || '<div class="empty">Este modelo não possui catálogo habilitado.</div>'}</div></div><div class="card" style="margin-top:12px"><h3 style="margin-top:0">Histórico de operações do equipamento</h3><div class="table-wrap"><table><thead><tr><th>ID</th><th>Operação</th><th>Parâmetro</th><th>Status</th><th>Interpretação</th><th>Data</th></tr></thead><tbody>${runs}</tbody></table></div><p class="hint">“Confirmado” significa que o valor não secreto foi observado após Inform. Para senhas, o RFN não tenta ler nem armazenar o segredo de volta. “queued” significa que a tarefa foi enfileirada e depende de nova comunicação do CPE.</p></div>`;
+    $('deviceTabBody').innerHTML = `<div class="card"><div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap"><div><h3 style="margin:0">Controle avançado do equipamento — MR60X</h3><p class="hint">Personalização via GenieACS com catálogo de parâmetros reconhecidos deste modelo. Só permite gravar um parâmetro se o próprio CPE o reportar como gravável.</p></div><div class="actions"><button class="secondary" onclick="labReboot('${esc(acsId)}')">Reiniciar roteador</button><button class="danger" onclick="labFactoryReset('${esc(acsId)}','${esc(d.serialNumber || '')}')">Reset de fábrica</button><button onclick="labRefresh('${esc(acsId)}')">Atualizar parâmetros</button><button class="secondary" onclick="renderMr60xLab('${esc(acsId)}')">Recarregar tela</button></div></div><div class="hint-block">${badge} ${conn} · Último Inform: <span class="mono">${esc(d.lastInform || '—')}</span></div><div class="hint-block" style="border-left:4px solid #c88619;margin-top:10px">Atenção: alterar PPPoE, IP LAN/DHCP, VLAN ou TR-069 pode interromper o acesso. Senhas não são exibidas nem gravadas no histórico. Reset de fábrica apaga configurações do roteador e pode remover o vínculo com o ACS; só use após preparar recuperação local/ISP Preset. Para reset persistente com logo e padrões RFN, use o recurso oficial ISP Preset/Agile Config compatível com a revisão.</div><div class="two" style="margin-top:12px;align-items:end"><div><label for="labParamSearch">Buscar parâmetro</label><input id="labParamSearch" placeholder="Ex.: SSID, VLAN, DHCP, ACS" oninput="filterLabParameters()"></div><div><label for="labCategoryFilter">Categoria</label>${categoryFilter}</div></div><div id="labAdvancedParams" class="grid" style="grid-template-columns:repeat(auto-fit,minmax(min(100%,460px),1fr));gap:10px;margin-top:12px">${candidates || '<div class="empty">Este modelo não possui catálogo habilitado.</div>'}</div></div><div class="card" style="margin-top:12px"><h3 style="margin-top:0">Histórico de operações do equipamento</h3><div class="table-wrap"><table><thead><tr><th>ID</th><th>Operação</th><th>Parâmetro</th><th>Status</th><th>Interpretação</th><th>Data</th></tr></thead><tbody>${runs}</tbody></table></div><p class="hint">“Confirmado” significa que o valor não secreto foi observado após Inform. Para senhas, o RFN não tenta ler nem armazenar o segredo de volta. “queued” significa que a tarefa foi enfileirada e depende de nova comunicação do CPE.</p></div>`;
     filterLabParameters();
   } catch (e) { $('deviceTabBody').innerHTML = `<div class="card empty">${esc(e.message)}</div>`; }
 }
@@ -983,6 +1022,30 @@ async function labReboot(acsId) {
   try {
     const r = await api(`/api/acs/devices/${encodeURIComponent(acsId)}/lab/reboot`, { method: 'POST', body: JSON.stringify({ confirmCritical: true }) });
     showStatus(`Reinicialização ${r.status === 'executed' ? 'solicitada ao CPE' : 'enfileirada no GenieACS'}. Operação #${r.runId}.`);
+    await renderMr60xLab(acsId);
+  } catch (e) { showStatus(e.message, false); }
+}
+
+async function labFactoryReset(acsId, expectedSerial) {
+  const serial = String(expectedSerial || '').trim();
+  if (!serial) { showStatus('Não foi possível confirmar o serial do CPE. Atualize os parâmetros antes do reset.', false); return; }
+  const accepted = window.confirm(`RESET DE FÁBRICA — ação destrutiva
+
+Equipamento: MERCUSYS MR60X
+Serial: ${serial}
+
+O reset apaga configurações personalizadas. O CPE pode perder a URL/credenciais do ACS e não voltar a ser gerenciado remotamente. A logo RFN só fica no firmware após configuração por ferramenta oficial do fabricante.
+
+Só prossiga se houver acesso local ou plano de recuperação e se este CPE for realmente o alvo.`);
+  if (!accepted) return;
+  const typed = window.prompt(`Para confirmar, digite o serial exato do equipamento:
+${serial}`);
+  if (typed === null || typed.trim() !== serial) { showStatus('Reset cancelado: o serial não confere.', false); return; }
+  try {
+    const r = await api(`/api/acs/devices/${encodeURIComponent(acsId)}/lab/factory-reset`, {
+      method: 'POST', body: JSON.stringify({ confirmCritical: true, confirmSerial: typed.trim() })
+    });
+    showStatus(`Reset de fábrica ${r.status === 'executed' ? 'enviado/executado pelo ACS' : 'enfileirado no GenieACS'}. Operação #${r.runId}. O CPE pode não retornar ao ACS após o reset.`);
     await renderMr60xLab(acsId);
   } catch (e) { showStatus(e.message, false); }
 }
