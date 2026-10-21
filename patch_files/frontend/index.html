@@ -552,6 +552,7 @@
       <div class="toolbar ops-toolbar" style="margin-top:14px"><div><h3 style="margin:0">Fila operacional</h3><div class="hint">Estado cadastral do inventário. WAN/PPPoE ao vivo é consultado ao abrir cada equipamento.</div></div><div class="actions"><input id="operationsSearch" placeholder="Buscar cliente, modelo ou serial" oninput="renderOperationsDashboard()" style="min-width:240px"><button class="secondary" onclick="refreshOperationsDashboard()">Atualizar painel</button></div></div><div id="operationsDashboard"><div class="card"><p class="hint">Carregando fila operacional...</p></div></div>
     </section>
     <section id="page-equipment" class="page">
+      <div id="mikrotikNotice" class="hint-block" style="margin-bottom:12px">Verificando integração MikroTik...</div>
       <div class="table-wrap">
         <table>
           <thead>
@@ -563,7 +564,8 @@
               <th>MAC</th>
               <th>Cliente</th>
               <th>Perfil</th>
-              <th>Status</th>
+              <th>Status do equipamento</th>
+              <th>Acesso à internet</th>
               <th>Ações</th>
             </tr>
           </thead>

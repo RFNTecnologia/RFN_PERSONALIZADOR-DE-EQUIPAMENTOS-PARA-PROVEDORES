@@ -1,6 +1,6 @@
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]));
-let equipment = [], customers = [], profiles = [], acs = [], providerSettings = null;
+let equipment = [], customers = [], profiles = [], acs = [], providerSettings = null, mikrotikIntegration = { configured: false };
 let currentProvisionValues = [];
 let currentDeviceModal = { id: null, acsId: '', tab: 'info' };
 
@@ -123,8 +123,8 @@ $('loginForm').addEventListener('submit', async event => {
 
 async function loadAll() {
   try {
-    const [d, e, c, p, s] = await Promise.all([api('/api/dashboard'), api('/api/equipment'), api('/api/customers'), api('/api/profiles'), api('/api/provider-settings')]);
-    equipment = e; customers = c; profiles = p; providerSettings = s; renderProviderSettings();
+    const [d, e, c, p, s, m] = await Promise.all([api('/api/dashboard'), api('/api/equipment'), api('/api/customers'), api('/api/profiles'), api('/api/provider-settings'), api('/api/mikrotik/status')]);
+    equipment = e; customers = c; profiles = p; providerSettings = s; mikrotikIntegration = m; renderProviderSettings();
     $('cCustomers').textContent = d.customers ?? customers.length;
     $('cEquipment').textContent = d.equipment;
     $('cOnline').textContent = d.online_equipment;
@@ -167,8 +167,50 @@ async function refreshOperationsDashboard() {
 
 function renderEquipment() {
   const tb = $('equipmentTable');
-  if (!equipment.length) { tb.innerHTML = '<tr><td colspan="9" class="empty">Nenhum equipamento cadastrado.</td></tr>'; return; }
-  tb.innerHTML = equipment.map(x => `<tr><td>${esc(x.manufacturer)}</td><td>${esc(x.model)}</td><td>${esc(x.equipment_type)}</td><td class="mono">${esc(x.serial_number)}</td><td class="mono">${esc(x.mac || '-')}</td><td>${esc(x.customer_name || '-')}</td><td>${esc(x.profile_name || 'Sem perfil')}</td><td><span class="badge ${x.status === 'online' ? 'online' : 'unknown'}">${esc(x.status)}</span></td><td><button class="secondary" onclick="equipmentActions(${x.id},'${esc(x.acs_device_id || '')}')">Abrir</button></td></tr>`).join('');
+  const notice = $('mikrotikNotice');
+  if (notice) {
+    notice.innerHTML = mikrotikIntegration.configured
+      ? `<b>Integração MikroTik configurada.</b> Host: <span class="mono">${esc(mikrotikIntegration.host)}</span>:${esc(mikrotikIntegration.port)}. <button class="secondary" onclick="testMikrotikConnection()">Testar conexão (somente leitura)</button><div class="hint">Bloquear desabilita a conta PPPoE e encerra as sessões ativas desse usuário.</div>`
+      : `<b>Integração MikroTik ainda não configurada.</b> Os botões ficam desativados até preencher MIKROTIK_HOST, MIKROTIK_USERNAME e MIKROTIK_PASSWORD no arquivo .env e reiniciar a API.`;
+  }
+  if (!equipment.length) { tb.innerHTML = '<tr><td colspan="10" class="empty">Nenhum equipamento cadastrado.</td></tr>'; return; }
+  tb.innerHTML = equipment.map(x => {
+    const serviceStatus = x.service_status || 'enabled';
+    const blocked = serviceStatus === 'blocked';
+    const hasCustomer = Boolean(x.customer_id && x.customer_pppoe_username);
+    const action = blocked ? 'unblock' : 'block';
+    const actionLabel = blocked ? 'Desbloquear internet' : 'Bloquear internet';
+    const actionDisabled = !mikrotikIntegration.configured || !hasCustomer;
+    const title = !mikrotikIntegration.configured ? 'Configure a integração MikroTik no .env' : (!hasCustomer ? 'Associe um cliente e cadastre o usuário PPPoE' : actionLabel);
+    return `<tr><td>${esc(x.manufacturer)}</td><td>${esc(x.model)}</td><td>${esc(x.equipment_type)}</td><td class="mono">${esc(x.serial_number)}</td><td class="mono">${esc(x.mac || '-')}</td><td>${esc(x.customer_name || '-')}</td><td>${esc(x.profile_name || 'Sem perfil')}</td><td><span class="badge ${x.status === 'online' ? 'online' : 'unknown'}">${esc(x.status)}</span></td><td><span class="badge ${blocked ? 'unknown' : 'online'}">${blocked ? 'Acesso bloqueado' : 'Acesso liberado'}</span><div class="hint">${esc(x.customer_pppoe_username || 'Sem usuário PPPoE')}</div></td><td><div class="actions"><button class="secondary" onclick="equipmentActions(${Number(x.id)},'${esc(x.acs_device_id || '')}')">Abrir</button><button ${actionDisabled ? 'disabled title="' + esc(title) + '"' : ''} class="${blocked ? '' : 'danger'}" onclick="changeServiceStatus(${Number(x.id)},'${action}')">${actionLabel}</button></div></td></tr>`;
+  }).join('');
+}
+async function testMikrotikConnection() {
+  try {
+    const result = await api('/api/mikrotik/test', { method: 'POST', body: '{}' });
+    showStatus(`Conexão MikroTik confirmada: ${result.identity} (${result.host}:${result.port}). Nenhuma conta PPPoE foi alterada.`);
+  } catch (error) {
+    showStatus(error.message, false);
+  }
+}
+async function changeServiceStatus(equipmentId, action) {
+  const item = equipment.find(x => Number(x.id) === Number(equipmentId));
+  if (!item) return showStatus('Equipamento não encontrado.', false);
+  const blocking = action === 'block';
+  const verb = blocking ? 'BLOQUEAR' : 'DESBLOQUEAR';
+  const account = item.customer_pppoe_username || 'usuário PPPoE não cadastrado';
+  const warning = blocking
+    ? `Isso desabilitará a conta PPPoE "${account}" no MikroTik e encerrará as sessões ativas desse usuário.`
+    : `Isso habilitará novamente a conta PPPoE "${account}" no MikroTik. O cliente poderá reconectar.`;
+  if (!confirm(`${verb} o acesso à internet de ${item.customer_name || 'este cliente'}?\n\n${warning}\n\nA configuração PPPoE armazenada no MR60X não será alterada. Continuar?`)) return;
+  try {
+    const result = await api(`/api/equipment/${Number(equipmentId)}/service-action`, { method: 'POST', body: JSON.stringify({ action }) });
+    showStatus(blocking ? `Acesso bloqueado no MikroTik. Sessões encerradas: ${result.sessionsDisconnected ?? 0}.` : 'Conta PPPoE habilitada no MikroTik; o cliente poderá reconectar.');
+    await loadAll();
+  } catch (error) {
+    showStatus(error.message, false);
+    await loadAll();
+  }
 }
 function renderCustomers() {
   const tb = $('customersTable');

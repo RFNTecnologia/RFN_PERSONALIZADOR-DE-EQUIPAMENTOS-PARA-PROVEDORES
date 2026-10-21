@@ -3,6 +3,7 @@ import pg from "pg";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isRouterOSConfigured, routerOSConnectionTest, routerOSServiceAction } from "./mikrotik.js";
 
 const { Pool } = pg;
 const app = express();
@@ -404,6 +405,88 @@ app.patch("/api/equipment/:id", async (req, res, next) => {
     next(e);
   } finally {
     client.release();
+  }
+});
+
+app.get("/api/mikrotik/status", (_req, res) => {
+  const configured = isRouterOSConfigured();
+  res.json({
+    configured,
+    host: configured ? String(process.env.MIKROTIK_HOST).trim() : null,
+    port: configured ? Number(process.env.MIKROTIK_PORT || 8728) : null,
+    message: configured
+      ? "Integração MikroTik configurada; o comando só será executado após confirmação do operador."
+      : "Integração MikroTik pendente: configure MIKROTIK_HOST, MIKROTIK_USERNAME e MIKROTIK_PASSWORD no .env."
+  });
+});
+
+app.post("/api/mikrotik/test", async (_req, res) => {
+  try {
+    const result = await routerOSConnectionTest();
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    res.status(502).json({ error: String(error.message || "Não foi possível conectar ao MikroTik.") });
+  }
+});
+
+app.get("/api/equipment/:id/service-history", async (req, res, next) => {
+  const equipmentId = Number(req.params.id);
+  if (!Number.isSafeInteger(equipmentId) || equipmentId <= 0) return res.status(400).json({ error: "ID de equipamento inválido." });
+  try {
+    const q = await pool.query(`
+      select id, pppoe_username, action, result, detail, requested_by_email, created_at
+      from equipment_service_actions where equipment_id=$1 order by id desc limit 30
+    `, [equipmentId]);
+    res.json(q.rows);
+  } catch (error) { next(error); }
+});
+
+app.post("/api/equipment/:id/service-action", async (req, res) => {
+  const equipmentId = Number(req.params.id);
+  const action = String(req.body?.action || "");
+  if (!Number.isSafeInteger(equipmentId) || equipmentId <= 0) return res.status(400).json({ error: "ID de equipamento inválido." });
+  if (!["block", "unblock"].includes(action)) return res.status(400).json({ error: "Selecione bloquear ou desbloquear." });
+  if (!isRouterOSConfigured()) return res.status(503).json({ error: "Integração MikroTik não configurada. Nenhuma alteração foi feita." });
+
+  let target = null;
+  try {
+    const lookup = await pool.query(`
+      select e.id, e.customer_id, e.service_status, e.manufacturer, e.model,
+             c.name as customer_name, c.pppoe_username
+      from equipment e left join customers c on c.id=e.customer_id
+      where e.id=$1 limit 1
+    `, [equipmentId]);
+    target = lookup.rows[0] || null;
+    if (!target) return res.status(404).json({ error: "Equipamento não encontrado." });
+    if (!target.customer_id || !target.customer_name) return res.status(409).json({ error: "Associe o equipamento ao cadastro do cliente antes de controlar o acesso." });
+    if (!target.pppoe_username || !String(target.pppoe_username).trim()) return res.status(409).json({ error: "Cadastre o usuário PPPoE do cliente em Clientes → Editar dados / PPPoE antes de controlar o acesso." });
+
+    try {
+      const result = await routerOSServiceAction(target.pppoe_username, action);
+      const serviceStatus = action === "block" ? "blocked" : "enabled";
+      await pool.query("update equipment set service_status=$1 where id=$2", [serviceStatus, equipmentId]);
+      await pool.query(`
+        insert into equipment_service_actions(equipment_id, customer_id, pppoe_username, action, result, detail, requested_by, requested_by_email)
+        values($1,$2,$3,$4,'success',$5::jsonb,$6,$7)
+      `, [equipmentId, target.customer_id, target.pppoe_username, action, JSON.stringify(result), req.authUser?.id || null, req.authUser?.email || null]);
+      return res.json({ ok: true, service_status: serviceStatus, customer_name: target.customer_name, ...result });
+    } catch (error) {
+      const partial = Boolean(error.partial);
+      if (partial && action === "block") {
+        await pool.query("update equipment set service_status='blocked' where id=$1", [equipmentId]);
+      }
+      try {
+        await pool.query(`
+          insert into equipment_service_actions(equipment_id, customer_id, pppoe_username, action, result, detail, requested_by, requested_by_email)
+          values($1,$2,$3,$4,$5,$6::jsonb,$7,$8)
+        `, [equipmentId, target.customer_id, target.pppoe_username, action, partial ? "partial" : "failed", JSON.stringify({ message: String(error.message || "Falha ao executar comando") }), req.authUser?.id || null, req.authUser?.email || null]);
+      } catch (auditError) { console.error("Não foi possível gravar auditoria de serviço", auditError.message); }
+      const status = partial ? 502 : (String(error.message || "").includes("não foi encontrada") ? 409 : 502);
+      return res.status(status).json({ error: String(error.message || "Falha ao executar ação no MikroTik."), service_status: partial ? "blocked" : target.service_status });
+    }
+  } catch (error) {
+    console.error("Falha no controle de serviço MikroTik", error);
+    return res.status(500).json({ error: "Falha interna ao registrar a operação de serviço." });
   }
 });
 

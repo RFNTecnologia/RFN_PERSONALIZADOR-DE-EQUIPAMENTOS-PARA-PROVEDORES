@@ -1,4 +1,4 @@
-services:
+﻿services:
   mongo:
     image: mongo:8.0
     restart: unless-stopped
@@ -102,6 +102,11 @@ services:
       CPE_ADMIN_PASSWORD: ${CPE_ADMIN_PASSWORD:?Execute scripts/bootstrap-local.ps1 para gerar CPE_ADMIN_PASSWORD}
       API_SESSION_SECRET: ${API_SESSION_SECRET:?Configure API_SESSION_SECRET no arquivo .env}
       API_COOKIE_SECURE: ${API_COOKIE_SECURE:-false}
+      MIKROTIK_HOST: ${MIKROTIK_HOST:-}
+      MIKROTIK_PORT: ${MIKROTIK_PORT:-8728}
+      MIKROTIK_USERNAME: ${MIKROTIK_USERNAME:-}
+      MIKROTIK_PASSWORD: ${MIKROTIK_PASSWORD:-}
+      MIKROTIK_TIMEOUT_MS: ${MIKROTIK_TIMEOUT_MS:-7000}
     expose:
       - "8080"
     healthcheck:
@@ -140,3 +145,4 @@ volumes:
   redis_data:
   postgres_data:
   genieacs_logs:
+

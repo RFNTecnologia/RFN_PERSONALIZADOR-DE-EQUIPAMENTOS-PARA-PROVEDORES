@@ -1,0 +1,39 @@
+RFN_Personalizar-roteadores — V12.6.0
+Bloqueio e desbloqueio de acesso via MikroTik RouterOS API
+
+O QUE ESTA VERSÃO FAZ
+- Adiciona ações Bloquear internet / Desbloquear internet na lista Equipamentos.
+- Bloquear desabilita a conta PPPoE exata no MikroTik e remove sessões ativas desse usuário.
+- Desbloquear habilita a conta PPPoE; o CPE poderá reconectar.
+- Exige equipamento associado a um cliente e usuário PPPoE cadastrado no cliente.
+- Grava auditoria com operador, horário, cliente, usuário PPPoE e resultado, sem armazenar senhas.
+- Adiciona a migration 007 para a tabela de auditoria.
+- Não envia comandos ao MikroTik durante a instalação e não altera a configuração PPPoE no MR60X.
+
+INSTALAÇÃO
+1. Extraia o ZIP na pasta atual do projeto:
+   C:\Users\robso\OneDrive\Desktop\RFN_Personalizar-roteadores
+2. Abra PowerShell nessa pasta e execute:
+   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+   .\Aplicar-V12.6.0-Bloqueio-MikroTik.ps1
+3. Abra o arquivo .env no seu computador (não o envie no chat) e adicione/configure estas variáveis:
+   MIKROTIK_HOST=IP_DE_GERENCIAMENTO_DO_MIKROTIK
+   MIKROTIK_PORT=8728
+   MIKROTIK_USERNAME=USUARIO_DA_API
+   MIKROTIK_PASSWORD="SENHA_DO_USUARIO_DA_API"
+   MIKROTIK_TIMEOUT_MS=7000
+   Substitua os exemplos pelos dados reais. Se já existirem variáveis MIKROTIK_*, atualize-as em vez de duplicar.
+4. No MikroTik, use um usuário de API dedicado, com permissões mínimas necessárias de leitura/escrita/API, e restrinja o serviço API à rede/IP do servidor RFN. Não exponha a porta 8728 à internet; essa API não cifra o tráfego por padrão.
+5. Reconstrua somente API e Nginx:
+   docker compose up -d --build api nginx
+6. Abra http://localhost e pressione Ctrl+F5. Em Equipamentos, clique em “Testar conexão (somente leitura)”. Esse comando só lê a identidade do MikroTik; não altera contas PPPoE.
+7. Só depois da conexão confirmada, faça a primeira ação com uma conta PPPoE de teste; não teste bloqueio na conta ativa robson.ferreira.
+
+IMPORTANTE
+- Os botões permanecem desativados até que host, usuário e senha estejam configurados.
+- Não envie a senha do MikroTik pelo chat. Ela deve ficar apenas no .env local.
+- Bloquear desabilita a conta PPPoE no MikroTik e desconecta sessões ativas do usuário. Isso bloqueia também outros dispositivos que estejam usando exatamente a mesma conta PPPoE.
+- Desbloquear reabilita a conta, mas não força uma sessão nova; o roteador cliente normalmente volta a discar.
+- O comando atua na conta PPPoE do MikroTik; não altera usuário/senha salvos no MR60X, VLAN, Wi-Fi, GenieACS ou o registro histórico de provisionamento.
+- Faça bloqueios/desbloqueios apenas de clientes autorizados. Primeiro use uma conta de teste, depois a conta de cliente.
+- O instalador cria um backup com data/hora e não altera .env.
