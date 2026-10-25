@@ -1,0 +1,44 @@
+name: Validate personalization module
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches:
+      - main
+      - feature/personalizacao-persistente-onu-ont
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # The repository currently has a large pre-existing Prettier backlog.
+      # Keep code-quality lint focused on the changed application files and
+      # do not let unrelated formatting violations prevent the production build.
+      - name: Lint personalization changes
+        run: >-
+          bunx eslint
+          src/components/persistent-personalization.tsx
+          src/components/router-console.tsx
+          src/routes/index.tsx
+          src/integrations/supabase/types.ts
+          supabase/functions/genieacs-proxy/index.ts
+          --global 'Deno:readonly'
+          --rule '{"prettier/prettier":"off"}'
+
+      - name: Build
+        run: bun run build
