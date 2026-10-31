@@ -1,6 +1,0 @@
-{
-  "template": "app-react-ts",
-  "revisao": "2026-10-28",
-  "comando": "npm run build",
-  "saida": "dist"
-}
