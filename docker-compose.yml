@@ -1,0 +1,46 @@
+# RFN - Painel do provedor (ACS TR-069 + painel web)
+# Windows (Docker Desktop) / Linux / macOS:
+#
+#   docker compose up -d --build
+#   docker compose logs -f
+#   docker compose down
+#
+services:
+  rfn-painel:
+    build: .
+    image: rfn-painel:1.0.0
+    container_name: rfn-painel
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      RFN_PORT: "8080"
+      RFN_HOST: "0.0.0.0"
+      RFN_DATA_DIR: "/data"
+      # Endereco publico do servidor (o CPE usa este para falar com o ACS)
+      # RFN_PUBLIC_URL: "https://acs.seuprovedor.com.br:8080"
+      # Tokens: se nao definir, o servidor gera e salva em /data/token.txt
+      # RFN_TOKEN: "token do painel"
+      # RFN_DEVICE_TOKEN: "token dos equipamentos"
+      # Credenciais do TR-069
+      # RFN_ACS_USERNAME: "admin"
+      # RFN_ACS_PASSWORD: "senha-do-tr069"
+      # HTTPS (monte ./certs no container)
+      # RFN_TLS_CERT: "/certs/cert.pem"
+      # RFN_TLS_KEY: "/certs/key.pem"
+    volumes:
+      - rfn-dados:/data
+      # - ./certs:/certs:ro
+
+    # --- Varredura de rede (SSDP/UPnP e sondagem de portas) ---
+    # Para o container enxergar a LAN de acesso do provedor como a maquina
+    # host, ative a rede host (Docker Desktop 4.34+ com a opcao habilitada
+    # em Settings > Resources > Network) e comente o bloco "ports" acima:
+    #
+    # network_mode: host
+    #
+    # Sem rede host, a varredura funciona por NAT (sondagem de portas),
+    # mas a descoberta SSDP multicast pode nao atravessar o NAT.
+
+volumes:
+  rfn-dados:
