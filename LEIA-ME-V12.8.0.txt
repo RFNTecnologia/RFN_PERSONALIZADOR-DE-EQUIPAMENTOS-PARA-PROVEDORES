@@ -1,0 +1,36 @@
+RFN_Personalizar-roteadores V12.8.0 — Personalização ISP, Reset e Identidade Visual
+
+O QUE ESTE PATCH FAZ
+- Permite enviar logo do computador (PNG, JPEG, WebP ou GIF; até 1,5 MB) na tela Personalização ISP.
+- Salva a imagem nos provider settings existentes e aplica o nome/logo ao cabeçalho e à prévia do RFN.
+- Valida a origem da logo: URL HTTP/HTTPS ou data URL de imagem permitida.
+- Adiciona ação de reset de fábrica pelo GenieACS para MERCUSYS MR60X, com validação independente do modelo, Inform recente e digitação do serial exato.
+- Registra solicitação de reset na tabela lab_runs já existente, sem armazenar credenciais.
+- Mantém o botão de reinicialização e a integração de bloqueio/desbloqueio do MikroTik existentes.
+- Aponta para o método oficial MERCUSYS ISP Preset/Agile Config, necessário para instalar logo/favicon no próprio firmware e manter os novos padrões após reset nos modelos/revisões suportados.
+
+INSTALAÇÃO
+1. Baixe o ZIP para a pasta Downloads do Windows.
+2. Abra PowerShell e execute o bloco completo abaixo (ele encontra e extrai o ZIP):
+
+   $zip = Get-ChildItem "$env:USERPROFILE\Downloads" -Filter "RFN_Personalizar-roteadores-V12.8.0-Personalizacao-Reset-Logo-PATCH.zip" -File | Select-Object -First 1
+   if (-not $zip) { throw "Baixe o ZIP V12.8.0 para a pasta Downloads antes de continuar." }
+   $extractRoot = Join-Path $env:TEMP "RFN_V12.8.0"
+   Remove-Item $extractRoot -Recurse -Force -ErrorAction SilentlyContinue
+   Expand-Archive -LiteralPath $zip.FullName -DestinationPath $extractRoot -Force
+   $installer = Get-ChildItem $extractRoot -Filter "Aplicar-V12.8.0-Personalizacao-Reset-Logo.ps1" -Recurse -File | Select-Object -First 1
+   if (-not $installer) { throw "Instalador não encontrado no ZIP extraído." }
+   Set-Location "C:\Users\robso\OneDrive\Desktop\RFN_Personalizar-roteadores"
+   & $installer.FullName
+   docker compose up -d --build api nginx
+
+3. Atualize o navegador com Ctrl+F5 e abra Personalização ISP.
+
+SEGURANÇA E LIMITES
+- A instalação NÃO envia comandos ao roteador, NÃO executa reset, NÃO muda .env, contas PPPoE ou banco de dados.
+- A ação Reset de fábrica é destrutiva: apaga configurações do CPE e pode remover URL/credenciais do ACS. A UI pede confirmação e digitação do serial; a API verifica o serial, o modelo MERCUSYS MR60X e Inform recente. Use apenas com acesso local/plano de recuperação preparado.
+- NÃO use reset de fábrica no CPE que está funcionando até a recuperação após reset estar preparada.
+- A logo na barra/cabeçalho e na prévia é identidade visual do RFN. Isso NÃO altera automaticamente a página web do roteador.
+- Para logo/favicons dentro da interface web do MR60X e para gravar padrões persistentes após reset, a MERCUSYS lista MR60X V2 no fluxo ISP Preset/Agile Config 2.1. Valide a revisão/firmware exatos e obtenha a ferramenta oficial do fornecedor: https://www.mercusys.com.br/support/isp/
+- Bloqueio/desbloqueio de internet via MikroTik permanece como implementado na V12.6 e confirmado pelo usuário; este patch não altera essa integração.
+- Somente arquivos backend/server.js, frontend/app.js e frontend/index.html são substituídos. É criado backup com timestamp.

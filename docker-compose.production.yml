@@ -1,0 +1,11 @@
+services:
+  api:
+    environment:
+      API_COOKIE_SECURE: "true"
+
+  nginx:
+    ports:
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.production.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro

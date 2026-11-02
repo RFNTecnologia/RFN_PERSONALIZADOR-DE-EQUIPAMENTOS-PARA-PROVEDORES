@@ -1,0 +1,12 @@
+RFN V12.5.0 — Painel Operacional do Técnico
+
+Instalação:
+1. Extraia os arquivos deste ZIP diretamente na pasta principal RFN_Personalizar-roteadores, ao lado de docker-compose.yml.
+2. No PowerShell nessa pasta execute: Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+3. Execute: .\Aplicar-V12.5.0-Painel-Operacional.ps1
+4. Execute: docker compose up -d --build api nginx
+5. Abra http://localhost e pressione Ctrl+F5.
+
+O patch atualiza apenas frontend/app.js e frontend/index.html e cria backup automático. Não inclui nem altera .env, não executa migrations e não envia comandos ao roteador.
+
+O painel lista pendências cadastrais: cliente ausente, perfil ausente, vínculo GenieACS ausente e equipamentos que não constam como online no inventário. Não interpreta o estado do inventário como diagnóstico de PPPoE; a leitura WAN/PPPoE em tempo real fica no modal do equipamento.

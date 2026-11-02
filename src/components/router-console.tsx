@@ -14,15 +14,17 @@ export type Equipment = Tables<"equipment"> & { customers: { name: string } | nu
 export type Customer = Tables<"customers">;
 export type Profile = Tables<"equipment_profiles">;
 export type Settings = Tables<"provider_settings">;
-export type ConsoleTab = "dashboard" | "equipment" | "profiles" | "isp" | "acs";
+export type ConsoleTab = "dashboard" | "equipment" | "profiles" | "isp" | "personalization" | "acs";
 
 const tabs: Array<{ id: ConsoleTab; label: string }> = [
   { id: "dashboard", label: "Dashboard" }, { id: "equipment", label: "Equipamentos" },
-  { id: "profiles", label: "Perfis" }, { id: "isp", label: "Personalização ISP" }, { id: "acs", label: "GenieACS" },
+  { id: "profiles", label: "Perfis" }, { id: "isp", label: "Personalização ISP" }, { id: "personalization", label: "Personalização de Equipamentos" }, { id: "acs", label: "GenieACS" },
 ];
 
-export function ConsoleShell({ tab, setTab, email, onSignOut, onImport, importing, onNewEquipment, onNewProfile, children }: {
-  tab: ConsoleTab; setTab: (tab: ConsoleTab) => void; email: string; onSignOut: () => void;
+export function ConsoleShell({ tab, setTab, email, providerName, providerLogoUrl, onSignOut, onImport, importing, onNewEquipment, onNewProfile, children }: {
+  tab: ConsoleTab; setTab: (tab: ConsoleTab) => void; email: string;
+  providerName?: string; providerLogoUrl?: string | null;
+  onSignOut: () => void;
   onImport: (event: ChangeEvent<HTMLInputElement>) => void; importing: boolean;
   onNewEquipment: () => void; onNewProfile: () => void; children: ReactNode;
 }) {
@@ -30,8 +32,13 @@ export function ConsoleShell({ tab, setTab, email, onSignOut, onImport, importin
   return <div className="min-h-screen bg-background text-foreground">
     <header className="sticky top-0 z-40 border-b border-border bg-header/95 backdrop-blur">
       <div className="mx-auto flex min-h-[72px] max-w-[1440px] items-center justify-between gap-4 px-4 sm:px-7">
-        <div className="flex min-w-0 items-center gap-3"><div className="grid size-10 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground"><Router size={21}/></div><div className="min-w-0"><p className="truncate text-lg font-extrabold">LOGO DO SEU PROVEDOR</p><p className="truncate text-xs text-muted-foreground">Personalização de Roteadores • ONU • ONT</p></div></div>
-        <div className="flex items-center gap-2"><span className="hidden items-center gap-2 rounded-full bg-muted px-3 py-1.5 text-xs font-bold text-muted-foreground sm:flex"><span className="size-2 rounded-full bg-warning"/>ACS: indisponível</span><Button size="icon" variant="ghost" aria-label="Sair" title={`Sair de ${email}`} onClick={onSignOut}><LogOut/></Button></div>
+        <div className="flex min-w-0 items-center gap-3">
+          {providerLogoUrl
+            ? <img src={providerLogoUrl} alt={providerName || "Logo do provedor"} className="max-h-10 max-w-32 shrink-0 object-contain" />
+            : <div className="grid size-10 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground"><Router size={21}/></div>}
+          <div className="min-w-0"><p className="truncate text-lg font-extrabold">{providerName || "RFN — Personalização ISP"}</p><p className="truncate text-xs text-muted-foreground">Personalização de Roteadores • ONU • ONT</p></div>
+        </div>
+        <div className="flex items-center gap-2"><span className="hidden items-center gap-2 rounded-full bg-muted px-3 py-1.5 text-xs font-bold text-muted-foreground sm:flex">TR-069 · GenieACS</span><Button size="icon" variant="ghost" aria-label="Sair" title={`Sair de ${email}`} onClick={onSignOut}><LogOut/></Button></div>
       </div>
     </header>
     <main className="mx-auto max-w-[1440px] px-4 py-5 sm:px-7 sm:py-7">
@@ -69,6 +76,15 @@ function settingsToForm(s:Settings|null):SettingsForm{return{company_name:s?.com
 export type GenieDevice = {
   _id: string;
   _tags?: string[];
+  _deviceId?: {
+    _Manufacturer?: string;
+    _OUI?: string;
+    _ProductClass?: string;
+    _SerialNumber?: string;
+  };
+  _lastInform?: string;
+  _registered?: boolean;
+  // Backward-compatible aliases for older proxy responses.
   DeviceId?: {
     Manufacturer?: string;
     OUI?: string;
@@ -95,25 +111,37 @@ export function AcsPanel({ onNotify }:{onNotify:(message:string)=>void}) {
   const [devices, setDevices] = useState<GenieDevice[]>([]);
   const [loading, setLoading] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [connectionMessage, setConnectionMessage] = useState("");
 
   const fetchDevices = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("https://uwrhzwhhjxwgfqtmhrpb.supabase.co/functions/v1/genieacs-proxy", {
+      const { data, error } = await supabase.functions.invoke<GenieDevice[]>("genieacs-proxy", {
         method: "GET",
-        headers: { "Content-Type": "application/json" },
       });
-      if (res.ok) {
-        const data = await res.json();
-        setDevices(Array.isArray(data) ? data : (data.items ?? []));
-        setConnected(true);
-      } else {
-        setConnected(false);
-        onNotify("Não foi possível conectar ao GenieACS. Verifique se o serviço está acessível.");
+      if (error) {
+        let detail = error.message;
+        const context = (error as unknown as { context?: unknown }).context;
+        if (context instanceof Response) {
+          try {
+            const payload = await context.clone().json() as { error?: string; message?: string };
+            detail = payload.error || payload.message || detail;
+          } catch {
+            // Fall back to the Supabase Functions error message.
+          }
+        }
+        throw new Error(detail);
       }
-    } catch {
+
+      const rows = Array.isArray(data) ? data : [];
+      setDevices(rows);
+      setConnected(true);
+      setConnectionMessage("");
+    } catch (error) {
       setConnected(false);
-      onNotify("Erro de conexão com o GenieACS.");
+      const detail = error instanceof Error ? error.message : "Falha ao consultar GenieACS.";
+      setConnectionMessage(detail);
+      onNotify(`GenieACS: ${detail}`);
     } finally {
       setLoading(false);
     }
@@ -121,7 +149,51 @@ export function AcsPanel({ onNotify }:{onNotify:(message:string)=>void}) {
 
   useEffect(() => { void fetchDevices(); }, [fetchDevices]);
 
-  return <div className="space-y-4"><div className="grid gap-3 sm:grid-cols-2"><Metric icon={<Antenna/>} label="Dispositivos no GenieACS" value={devices.length}/><div className="rounded-lg border border-border bg-card p-5"><div className="flex items-center gap-3"><div className={`grid size-9 place-items-center rounded-md ${connected ? "bg-success/15 text-success" : "bg-warning/15 text-warning"}`}><CircleDot/></div><div><p className="text-xs font-semibold uppercase text-muted-foreground">Conexão</p><p className="mt-1 font-bold">{connected ? "Conectado ao GenieACS" : "GenieACS offline"}</p></div></div></div></div><div className="overflow-x-auto rounded-lg border border-border bg-card"><div className="flex items-center justify-between gap-3 border-b border-border p-4"><h2 className="font-bold">Dispositivos GenieACS</h2><Button disabled={loading} onClick={()=>void fetchDevices()}><RefreshCw className={loading ? "animate-spin" : ""}/>{loading ? "Sincronizando..." : "Sincronizar ACS"}</Button></div><table className="w-full min-w-[760px] text-left text-sm"><thead className="text-xs uppercase text-muted-foreground"><tr>{["ID GenieACS","Fabricante","Modelo","Serial","Último Inform","Ação"].map(x=><th key={x} className="px-4 py-3">{x}</th>)}</tr></thead><tbody>{devices.length ? devices.map((d)=>{ const devId = d.DeviceId || {}; return <tr key={d._id} className="hover:bg-panel-raised/60"><td className="px-4 py-3 font-mono text-xs">{d._id}</td><td className="px-4 py-3">{devId.Manufacturer || devId.OUI || "—"}</td><td className="px-4 py-3">{devId.ProductClass || "—"}</td><td className="px-4 py-3 font-mono text-xs">{devId.SerialNumber || "—"}</td><td className="px-4 py-3 text-muted-foreground">{formatDate(d.LastInform)}</td><td className="px-4 py-3"><Button size="sm" variant="secondary" onClick={()=>onNotify(`Vinculação de CPE: abra o equipamento e informe o ID GenieACS ${d._id}`)}>Vincular</Button></td></tr>;}) : <tr><td colSpan={6} className="p-10 text-center text-muted-foreground"><ShieldCheck className="mx-auto mb-3"/>Nenhum CPE encontrado no GenieACS.</td></tr>}</tbody></table></div></div>;
+  return <div className="space-y-4">
+    <div className="grid gap-3 sm:grid-cols-2">
+      <Metric icon={<Antenna/>} label="Dispositivos no GenieACS" value={devices.length}/>
+      <div className="rounded-lg border border-border bg-card p-5">
+        <div className="flex items-center gap-3">
+          <div className={`grid size-9 place-items-center rounded-md ${connected ? "bg-success/15 text-success" : "bg-warning/15 text-warning"}`}><CircleDot/></div>
+          <div>
+            <p className="text-xs font-semibold uppercase text-muted-foreground">Conexão</p>
+            <p className="mt-1 font-bold">{connected ? "Conectado ao GenieACS" : "GenieACS não conectado"}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    {connectionMessage && <div role="status" className="rounded-md border border-warning/40 bg-warning/10 p-4 text-sm">
+      <p className="font-semibold">Integração GenieACS precisa de configuração</p>
+      <p className="mt-1 break-words">{connectionMessage}</p>
+      <p className="mt-2 text-muted-foreground">O backend exige GENIEACS_NBI_URL (HTTPS público), GENIEACS_NBI_USERNAME e GENIEACS_NBI_PASSWORD em secrets. O endpoint precisa alcançar o NBI por uma rota segura; IP de LAN não funciona a partir da função hospedada.</p>
+    </div>}
+    <div className="overflow-x-auto rounded-lg border border-border bg-card">
+      <div className="flex items-center justify-between gap-3 border-b border-border p-4">
+        <h2 className="font-bold">Dispositivos GenieACS</h2>
+        <Button disabled={loading} onClick={()=>void fetchDevices()}><RefreshCw className={loading ? "animate-spin" : ""}/>{loading ? "Sincronizando..." : "Sincronizar ACS"}</Button>
+      </div>
+      <table className="w-full min-w-[760px] text-left text-sm">
+        <thead className="text-xs uppercase text-muted-foreground"><tr>{["ID GenieACS","Fabricante","Modelo","Serial","Último Inform","Ação"].map(x=><th key={x} className="px-4 py-3">{x}</th>)}</tr></thead>
+        <tbody>
+          {devices.length ? devices.map((d)=>{
+            const devId = d._deviceId || d.DeviceId || {};
+            const manufacturer = devId._Manufacturer || devId.Manufacturer || devId._OUI || devId.OUI || "—";
+            const model = devId._ProductClass || devId.ProductClass || "—";
+            const serial = devId._SerialNumber || devId.SerialNumber || "—";
+            const lastInform = d._lastInform || d.LastInform;
+            return <tr key={d._id} className="hover:bg-panel-raised/60">
+              <td className="px-4 py-3 font-mono text-xs">{d._id}</td>
+              <td className="px-4 py-3">{manufacturer}</td>
+              <td className="px-4 py-3">{model}</td>
+              <td className="px-4 py-3 font-mono text-xs">{serial}</td>
+              <td className="px-4 py-3 text-muted-foreground">{formatDate(lastInform)}</td>
+              <td className="px-4 py-3"><Button size="sm" variant="secondary" onClick={()=>onNotify(`ID GenieACS ${d._id}: abra o equipamento correspondente no RFN e cole esse ID no campo “ID do dispositivo no GenieACS”.`)}>Vincular</Button></td>
+            </tr>;
+          }) : <tr><td colSpan={6} className="p-10 text-center text-muted-foreground"><ShieldCheck className="mx-auto mb-3"/>{connected ? "Nenhum CPE encontrado no GenieACS." : "Configure a conexão e clique em Sincronizar ACS."}</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  </div>;
 }
 
 export function EquipmentDialog({ open, setOpen, profiles, customers, onSave }:{open:boolean;setOpen:(v:boolean)=>void;profiles:Profile[];customers:Customer[];onSave:(value:EquipmentForm)=>Promise<void>}) { const initial={manufacturer:"",model:"",equipment_type:"router",serial_number:"",mac:"",profile_id:"",customer_id:""};const [form,setForm]=useState<EquipmentForm>(initial);const [busy,setBusy]=useState(false);async function submit(e:FormEvent){e.preventDefault();setBusy(true);await onSave(form);setBusy(false);setForm(initial);setOpen(false)}return <Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto"><DialogHeader><DialogTitle>Novo equipamento</DialogTitle><DialogDescription>Cadastre os dados de identificação do CPE.</DialogDescription></DialogHeader><form onSubmit={submit}><div className="grid gap-4 sm:grid-cols-2"><FormField label="Fabricante"><Input required value={form.manufacturer} onChange={e=>setForm({...form,manufacturer:e.target.value})}/></FormField><FormField label="Modelo"><Input required value={form.model} onChange={e=>setForm({...form,model:e.target.value})}/></FormField><FormField label="Tipo"><NativeSelect value={form.equipment_type} onChange={v=>setForm({...form,equipment_type:v})} options={[["router","Router"],["onu","ONU"],["ont","ONT"]]}/></FormField><FormField label="Serial"><Input required value={form.serial_number} onChange={e=>setForm({...form,serial_number:e.target.value})}/></FormField><FormField label="MAC"><Input value={form.mac} onChange={e=>setForm({...form,mac:e.target.value})}/></FormField><FormField label="Cliente"><NativeSelect value={form.customer_id} onChange={v=>setForm({...form,customer_id:v})} options={[["","Sem cliente"],...customers.map(c=>[c.id,c.name] as [string,string])]}/></FormField><FormField label="Perfil"><NativeSelect value={form.profile_id} onChange={v=>setForm({...form,profile_id:v})} options={[["","Sem perfil"],...profiles.map(p=>[p.id,p.name] as [string,string])]}/></FormField></div><DialogFooter className="mt-6"><Button type="button" variant="secondary" onClick={()=>setOpen(false)}>Cancelar</Button><Button disabled={busy}>{busy?"Salvando...":"Salvar"}</Button></DialogFooter></form></DialogContent></Dialog> }
@@ -129,9 +201,252 @@ export type EquipmentForm={manufacturer:string;model:string;equipment_type:strin
 
 export function ProfileDialog({ open,setOpen,profile,onSave }:{open:boolean;setOpen:(v:boolean)=>void;profile:Profile|null;onSave:(v:{name:string;description:string;config:string},id?:string)=>Promise<boolean>}) { const [name,setName]=useState("");const [description,setDescription]=useState("");const [config,setConfig]=useState("{\n  \"parameterValues\": []\n}");const [busy,setBusy]=useState(false);function sync(){setName(profile?.name??"");setDescription(profile?.description??"");setConfig(JSON.stringify(profile?.config??{parameterValues:[]},null,2));}async function submit(e:FormEvent){e.preventDefault();setBusy(true);const ok=await onSave({name,description,config},profile?.id);setBusy(false);if(ok)setOpen(false)}return <Dialog open={open} onOpenChange={(v)=>{setOpen(v);if(v)sync()}}><DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto"><DialogHeader><DialogTitle>{profile?"Editar":"Novo"} perfil</DialogTitle><DialogDescription>Use somente parâmetros existentes no firmware.</DialogDescription></DialogHeader><form onSubmit={submit} className="space-y-4"><FormField label="Nome"><Input required value={name} onChange={e=>setName(e.target.value)}/></FormField><FormField label="Descrição"><Input value={description} onChange={e=>setDescription(e.target.value)}/></FormField><FormField label="Configuração JSON"><Textarea className="min-h-72 font-mono text-xs" value={config} onChange={e=>setConfig(e.target.value)}/></FormField><DialogFooter><Button type="button" variant="secondary" onClick={()=>setOpen(false)}>Cancelar</Button><Button disabled={busy}>{busy?"Salvando...":"Salvar"}</Button></DialogFooter></form></DialogContent></Dialog> }
 
-export function DeviceDialog({ item,setItem,profiles,onAssign,onNotify }:{item:Equipment|null;setItem:(v:Equipment|null)=>void;profiles:Profile[];onAssign:(equipmentId:string,profileId:string)=>Promise<void>;onNotify:(m:string)=>void}) { const [tab,setTab]=useState("info");const [profileId,setProfileId]=useState("");if(!item)return null;const profile=profiles.find(p=>p.id===item.profile_id);const config=profile?.config&&typeof profile.config==="object"&&!Array.isArray(profile.config)?profile.config as Record<string,unknown>:{};const values=Array.isArray(config['parameterValues'])?config['parameterValues']:[];return <Dialog open={Boolean(item)} onOpenChange={v=>{if(!v)setItem(null)}}><DialogContent className="max-h-[92vh] max-w-4xl overflow-y-auto"><DialogHeader><div className="flex items-start justify-between gap-4 pr-8"><div><DialogTitle>{item.manufacturer} {item.model}</DialogTitle><DialogDescription>Serial <span className="font-mono">{item.serial_number}</span> · ACS ID: <span className="font-mono">{item.acs_device_id||"não vinculado"}</span></DialogDescription></div><StatusBadge status={item.status}/></div></DialogHeader><div className="flex gap-1 overflow-x-auto border-b border-border">{["info","params","wifi","wan","tr069","provision"].map(x=><Button key={x} variant="ghost" size="sm" onClick={()=>setTab(x)} className={`rounded-b-none border-b-2 ${tab===x?"border-primary bg-panel-raised":"border-transparent"}`}>{({info:"Informações",params:"Parâmetros",wifi:"Wi-Fi",wan:"WAN",tr069:"TR-069",provision:"Provisionamento"} as Record<string,string>)[x]}</Button>)}</div>{tab==="info"?<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><Info label="Fabricante" value={item.manufacturer}/><Info label="Modelo" value={item.model}/><Info label="Serial" value={item.serial_number}/><Info label="MAC" value={item.mac||"—"}/></div>:tab==="provision"?<ProvisionPlaceholder onNotify={onNotify}/>:<ParameterView title={tab==="params"?"Todos os parâmetros":tab==="wifi"?"Wi-Fi / WLAN":tab==="wan"?"WAN / Internet / VLAN / IP":"Gerência TR-069 / ManagementServer"} values={values}/>}<div className="grid gap-3 border-t border-border pt-4 sm:grid-cols-[260px_1fr]"><FormField label="Perfil"><NativeSelect value={profileId||item.profile_id||""} onChange={setProfileId} options={[["","Sem perfil"],...profiles.map(p=>[p.id,p.name] as [string,string])]}/></FormField><div className="flex flex-wrap items-end gap-2"><Button onClick={()=>onAssign(item.id,profileId||item.profile_id||"")}>Associar perfil</Button><Button variant="secondary" disabled={!item.acs_device_id} onClick={()=>onNotify("A aplicação do perfil será liberada após conectar o GenieACS com segurança.")}>Aplicar perfil</Button><Button variant="secondary" disabled={!item.acs_device_id} onClick={()=>onNotify("A atualização será liberada após conectar o GenieACS com segurança.")}><RefreshCw/>Atualizar do CPE</Button></div></div></DialogContent></Dialog> }
+function collectGenieParameters(node: unknown, prefix = "", rows: unknown[][] = []): unknown[][] {
+  if (!node || typeof node !== "object" || Array.isArray(node)) return rows;
+  const record = node as Record<string, unknown>;
+  if (Object.prototype.hasOwnProperty.call(record, "_value")) {
+    rows.push([prefix, record._value ?? "—", record._writable === true]);
+    return rows;
+  }
+  for (const [key, value] of Object.entries(record)) {
+    if (key.startsWith("_")) continue;
+    const path = prefix ? `${prefix}.${key}` : key;
+    collectGenieParameters(value, path, rows);
+  }
+  return rows;
+}
 
-function ParameterView({title,values}:{title:string;values:unknown[]}) { const [search,setSearch]=useState("");const rows=values.filter(v=>JSON.stringify(v).toLowerCase().includes(search.toLowerCase()));return <div className="rounded-lg border border-border bg-card p-4"><div className="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-end"><div><h3 className="font-bold">{title}</h3><p className="text-xs text-muted-foreground">{rows.length} parâmetro(s)</p></div><SearchBar value={search} onChange={setSearch}/></div>{rows.length?<div className="divide-y divide-border overflow-hidden rounded-md border border-border">{rows.map((v,i)=><div key={i} className="grid gap-2 bg-background p-3 text-xs sm:grid-cols-[1.6fr_1fr]"><code className="break-all text-muted-foreground">{Array.isArray(v)?String(v[0]):`Parâmetro ${i+1}`}</code><span className="break-all">{Array.isArray(v)?String(v[1]??"—"):JSON.stringify(v)}</span></div>)}</div>:<p className="rounded-md bg-background p-8 text-center text-sm text-muted-foreground">Nenhum parâmetro desta categoria foi coletado.</p>}</div> }
+function profileValuesForTab(values: unknown[], tab: string): unknown[] {
+  if (tab === "params") return values;
+  const patterns: Record<string, RegExp> = {
+    wifi: /wifi|wlan|ssid|pre.?shared.?key|accesspoint/i,
+    wan: /wan|ppp|vlan|ip\b|dns|ethernet|connectionstatus/i,
+    tr069: /managementserver|tr069|cwmp|periodicinform|connectionrequest/i,
+  };
+  const pattern = patterns[tab];
+  return pattern ? values.filter((value) => {
+    const path = Array.isArray(value) ? String(value[0] ?? "") : JSON.stringify(value);
+    return pattern.test(path);
+  }) : values;
+}
+
+export function DeviceDialog({
+  item,
+  setItem,
+  profiles,
+  onAssign,
+  onLinkAcsDevice,
+  onApplyProfile,
+  onRefreshDevice,
+  onNotify,
+}: {
+  item: Equipment | null;
+  setItem: (value: Equipment | null) => void;
+  profiles: Profile[];
+  onAssign: (equipmentId: string, profileId: string) => Promise<void>;
+  onLinkAcsDevice: (equipmentId: string, acsDeviceId: string) => Promise<void>;
+  onApplyProfile: (deviceId: string, profileId: string) => Promise<void>;
+  onRefreshDevice: (deviceId: string) => Promise<void>;
+  onNotify: (message: string) => void;
+}) {
+  const [tab, setTab] = useState("info");
+  const [profileId, setProfileId] = useState("");
+  const [acsIdDraft, setAcsIdDraft] = useState("");
+  const [busyAction, setBusyAction] = useState<"apply" | "refresh" | "link" | null>(null);
+  const [liveDevice, setLiveDevice] = useState<Record<string, unknown> | null>(null);
+  const [liveLoading, setLiveLoading] = useState(false);
+  const [liveError, setLiveError] = useState("");
+
+  useEffect(() => {
+    setTab("info");
+    setProfileId(item?.profile_id ?? "");
+    setAcsIdDraft(item?.acs_device_id ?? "");
+    setBusyAction(null);
+    setLiveDevice(null);
+    setLiveError("");
+  }, [item?.id, item?.profile_id, item?.acs_device_id]);
+
+  const loadLiveSnapshot = useCallback(async () => {
+    if (!item?.acs_device_id) {
+      setLiveDevice(null);
+      setLiveError("");
+      return;
+    }
+    setLiveLoading(true);
+    setLiveError("");
+    try {
+      const query = encodeURIComponent(JSON.stringify({ _id: item.acs_device_id }));
+      const endpoint = `genieacs-proxy/devices/?query=${query}`;
+      const { data, error } = await supabase.functions.invoke<Record<string, unknown>[]>(endpoint, { method: "GET" });
+      if (error) {
+        let detail = error.message;
+        const context = (error as unknown as { context?: unknown }).context;
+        if (context instanceof Response) {
+          try {
+            const payload = await context.clone().json() as { error?: string; message?: string };
+            detail = payload.error || payload.message || detail;
+          } catch {
+            // Keep the original function error.
+          }
+        }
+        throw new Error(detail);
+      }
+      const records = Array.isArray(data) ? data : [];
+      const matching = records.find((record) => record && record._id === item.acs_device_id);
+      if (!matching) throw new Error("O ID informado ainda não foi encontrado no GenieACS. Confirme o vínculo e se o CPE já enviou Inform.");
+      setLiveDevice(matching);
+      setLiveError("");
+    } catch (error) {
+      setLiveDevice(null);
+      setLiveError(error instanceof Error ? error.message : "Não foi possível ler os parâmetros TR-069.");
+    } finally {
+      setLiveLoading(false);
+    }
+  }, [item?.acs_device_id]);
+
+  useEffect(() => {
+    void loadLiveSnapshot();
+  }, [loadLiveSnapshot]);
+
+  if (!item) return null;
+
+  const activeProfileId = profileId || item.profile_id || "";
+  const profile = profiles.find((entry) => entry.id === activeProfileId);
+  const config = profile?.config && typeof profile.config === "object" && !Array.isArray(profile.config)
+    ? profile.config as Record<string, unknown>
+    : {};
+  const plannedValues = Array.isArray(config.parameterValues) ? config.parameterValues : [];
+  const liveValues = liveDevice ? collectGenieParameters(liveDevice) : [];
+  const displayValues = profileValuesForTab(liveDevice ? liveValues : plannedValues, tab);
+
+  async function applySelectedProfile() {
+    if (!item?.acs_device_id) return;
+    if (!activeProfileId) {
+      onNotify("Selecione um perfil antes de aplicar.");
+      return;
+    }
+    setBusyAction("apply");
+    try {
+      await onApplyProfile(item.acs_device_id, activeProfileId);
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function refreshSelectedDevice() {
+    if (!item?.acs_device_id) return;
+    setBusyAction("refresh");
+    try {
+      await onRefreshDevice(item.acs_device_id);
+      await loadLiveSnapshot();
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function saveAcsLink() {
+    setBusyAction("link");
+    try {
+      await onLinkAcsDevice(item.id, acsIdDraft.trim());
+      setAcsIdDraft(acsIdDraft.trim());
+      setLiveDevice(null);
+      setLiveError("");
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "Não foi possível salvar o vínculo ACS.");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  return <Dialog open={Boolean(item)} onOpenChange={(open) => { if (!open) setItem(null); }}>
+    <DialogContent className="max-h-[92vh] max-w-4xl overflow-y-auto">
+      <DialogHeader>
+        <div className="flex items-start justify-between gap-4 pr-8">
+          <div>
+            <DialogTitle>{item.manufacturer} {item.model}</DialogTitle>
+            <DialogDescription>Serial <span className="font-mono">{item.serial_number}</span></DialogDescription>
+          </div>
+          <StatusBadge status={item.status}/>
+        </div>
+      </DialogHeader>
+      <div className="grid gap-2 rounded-md border border-border bg-card p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+        <FormField label="ID do dispositivo no GenieACS">
+          <Input value={acsIdDraft} onChange={(event) => setAcsIdDraft(event.target.value)} placeholder="Copie o _id exibido na aba GenieACS"/>
+        </FormField>
+        <Button variant="secondary" disabled={busyAction !== null || !acsIdDraft.trim()} onClick={() => void saveAcsLink()}>
+          {busyAction === "link" ? "Vinculando..." : "Salvar vínculo ACS"}
+        </Button>
+        <p className="sm:col-span-2 text-xs text-muted-foreground">Vincular o cadastro local ao ID do ACS permite consultar o cache TR-069 e enviar tarefas ao CPE correspondente.</p>
+      </div>
+      <div className="flex flex-wrap gap-1 overflow-x-auto border-b border-border">
+        {["info", "params", "wifi", "wan", "tr069", "provision"].map((entry) => (
+          <Button key={entry} variant="ghost" size="sm" onClick={() => setTab(entry)} className={`rounded-b-none border-b-2 ${tab === entry ? "border-primary bg-panel-raised" : "border-transparent"}`}>
+            {({ info: "Informações", params: "Parâmetros", wifi: "Wi-Fi", wan: "WAN", tr069: "TR-069", provision: "Provisionamento" } as Record<string, string>)[entry]}
+          </Button>
+        ))}
+      </div>
+      {tab === "info" ? (
+        <div className="space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Info label="Fabricante" value={item.manufacturer}/>
+            <Info label="Modelo" value={item.model}/>
+            <Info label="Serial" value={item.serial_number}/>
+            <Info label="MAC" value={item.mac || "—"}/>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" disabled={!item.acs_device_id || liveLoading} onClick={() => void loadLiveSnapshot()}>
+              <RefreshCw className={liveLoading ? "animate-spin" : ""}/>
+              {liveLoading ? "Lendo ACS..." : "Consultar parâmetros TR-069"}
+            </Button>
+            <span className="text-xs text-muted-foreground">{liveDevice ? `${liveValues.length} parâmetros lidos do cache GenieACS` : "Parâmetros reais disponíveis após vincular um ID ACS."}</span>
+          </div>
+          {liveError && <div role="status" className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">{liveError}</div>}
+        </div>
+      ) : tab === "provision" ? (
+        <ProvisionPlaceholder onNotify={onNotify}/>
+      ) : (
+        <div className="space-y-2">
+          {liveDevice
+            ? <p className="text-xs text-muted-foreground">Valores lidos do registro do CPE no GenieACS. Senhas e campos sensíveis são ocultados. O indicador de gravabilidade vem do atributo informado pelo CPE.</p>
+            : <p className="text-xs text-muted-foreground">Exibindo o plano associado. Vincule um ID ACS e consulte os parâmetros para ver os valores reais do CPE.</p>}
+          <ParameterView
+            title={tab === "params" ? "Parâmetros TR-069" : tab === "wifi" ? "Wi-Fi / WLAN" : tab === "wan" ? "WAN / Internet / VLAN / IP" : "Gerência TR-069 / ManagementServer"}
+            values={displayValues}
+          />
+          {liveError && <div role="status" className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">{liveError}</div>}
+        </div>
+      )}
+      <div className="grid gap-3 border-t border-border pt-4 sm:grid-cols-[260px_1fr]">
+        <FormField label="Perfil">
+          <NativeSelect value={activeProfileId} onChange={setProfileId} options={[["", "Sem perfil"], ...profiles.map((entry) => [entry.id, entry.name] as [string, string])]}/>
+        </FormField>
+        <div className="flex flex-wrap items-end gap-2">
+          <Button onClick={() => void onAssign(item.id, activeProfileId)}>Associar perfil</Button>
+          <Button
+            variant="secondary"
+            disabled={!item.acs_device_id || !activeProfileId || busyAction !== null || plannedValues.length === 0}
+            onClick={() => void applySelectedProfile()}
+          >
+            {busyAction === "apply" ? "Enviando..." : "Aplicar perfil via TR-069"}
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={!item.acs_device_id || busyAction !== null}
+            onClick={() => void refreshSelectedDevice()}
+          >
+            <RefreshCw className={busyAction === "refresh" ? "animate-spin" : ""}/>
+            {busyAction === "refresh" ? "Solicitando..." : "Atualizar do CPE"}
+          </Button>
+        </div>
+        <p className="sm:col-span-2 text-xs leading-5 text-muted-foreground">
+          A aplicação envia uma tarefa ao GenieACS. O servidor confirma que cada caminho declarado no perfil existe e está marcado como gravável pelo CPE antes de enviar qualquer alteração. O aceite da tarefa não garante que o equipamento já tenha terminado a aplicação.
+        </p>
+      </div>
+    </DialogContent>
+  </Dialog>;
+}
+
+function ParameterView({title,values}:{title:string;values:unknown[]}) { const [search,setSearch]=useState("");const rows=values.filter(v=>JSON.stringify(v).toLowerCase().includes(search.toLowerCase()));return <div className="rounded-lg border border-border bg-card p-4"><div className="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-end"><div><h3 className="font-bold">{title}</h3><p className="text-xs text-muted-foreground">{rows.length} parâmetro(s)</p></div><SearchBar value={search} onChange={setSearch}/></div>{rows.length?<div className="divide-y divide-border overflow-hidden rounded-md border border-border">{rows.map((v,i)=><div key={i} className="grid gap-2 bg-background p-3 text-xs sm:grid-cols-[1.6fr_1fr]"><code className="break-all text-muted-foreground">{Array.isArray(v)?String(v[0]):`Parâmetro ${i+1}`}</code><div className="flex flex-wrap items-center justify-between gap-2"><span className="break-all">{Array.isArray(v)?String(v[1]??"—"):JSON.stringify(v)}</span>{Array.isArray(v)&&typeof v[2]==="boolean"&&<span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${v[2]?"bg-success/15 text-success":"bg-muted text-muted-foreground"}`}>{v[2]?"Gravável":"Somente leitura"}</span>}</div></div>)}</div>:<p className="rounded-md bg-background p-8 text-center text-sm text-muted-foreground">Nenhum parâmetro desta categoria foi coletado.</p>}</div> }
 function ProvisionPlaceholder({onNotify}:{onNotify:(m:string)=>void}) { return <div className="rounded-lg border border-border bg-card p-5"><h3 className="font-bold">Provisionamento manual do CPE</h3><p className="mt-2 text-sm leading-6 text-muted-foreground">Os caminhos PPPoE, VLAN, MTU, DNS e Wi-Fi serão preenchidos após a coleta dos parâmetros reais do firmware MR60X.</p><Button className="mt-4" disabled onClick={()=>onNotify("")}>Enviar para o CPE</Button></div> }
 function Info({label,value}:{label:string;value:string}){return <div className="rounded-lg border border-border bg-card p-4"><p className="text-xs text-muted-foreground">{label}</p><p className="mt-2 break-all font-bold">{value}</p></div>}
 function SearchBar({value,onChange}:{value:string;onChange:(v:string)=>void}){return <label className="flex h-10 w-full items-center gap-2 rounded-md border border-input bg-card px-3 sm:w-80"><Search size={16} className="text-muted-foreground"/><input value={value} onChange={e=>onChange(e.target.value)} placeholder="Pesquisar..." className="min-w-0 flex-1 bg-transparent text-sm outline-none"/>{value&&<Button type="button" size="icon" variant="ghost" className="size-7" onClick={()=>onChange("")} aria-label="Limpar pesquisa"><X/></Button>}</label>}

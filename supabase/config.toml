@@ -1,1 +1,4 @@
 project_id = "fhlwmpeakyxrvnzwyiwv"
+
+[functions.genieacs-proxy]
+verify_jwt = true

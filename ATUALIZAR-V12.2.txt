@@ -1,0 +1,9 @@
+ATUALIZAÇÃO RFN_Personalizar-roteadores V12.2
+
+Copie os arquivos mantendo as pastas:
+backend/server.js -> projeto/backend/server.js
+frontend/app.js -> projeto/frontend/app.js
+frontend/index.html -> projeto/frontend/index.html
+
+Não substitua o docker-compose.yml desta atualização.
+A V12.2 corrige o histórico do Laboratório MR60X, evita testes duplicados, reconcilia tarefas após novo Inform e exibe o estado de conectividade do CPE.

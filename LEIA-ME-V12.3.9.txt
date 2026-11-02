@@ -1,0 +1,26 @@
+RFN Personalizar Roteadores — V12.3.9
+Cadastro de clientes, associação de CPE e histórico de provisionamento.
+
+COMO APLICAR
+1. Extraia este ZIP diretamente na pasta principal RFN_Personalizar-roteadores (a mesma pasta do docker-compose.yml).
+2. Se o PowerShell bloquear scripts, na mesma janela execute: Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+3. Execute: .\Aplicar-V12.3.9-Clientes.ps1
+4. Após a mensagem de sucesso, execute: docker compose up -d --build api nginx
+5. Atualize http://localhost com Ctrl+F5.
+
+O script substitui backend/server.js, frontend/app.js e frontend/index.html depois de criar backups. Mantém .env e demais arquivos intactos. A correção SQL do histórico V12.3.8 já está integrada.
+
+O QUE MUDA
+- Nova aba Clientes e formulário de cadastro.
+- Seletor de cliente responsável ao abrir um equipamento.
+- Ao associar um cliente, ativações antigas sem cliente são vinculadas a ele; registros que já têm outro cliente permanecem intactos.
+- Novas ativações no modo Cliente final ficam bloqueadas até associar um cliente ao CPE.
+- Mantém a lista permitida de parâmetros do MR60X e não altera VLAN/LAN/ACS.
+
+DEPOIS DA INSTALAÇÃO
+1. Abra Clientes e cadastre o cliente correto (nome obrigatório; demais campos opcionais).
+2. Abra Equipamentos > Abrir no MR60X.
+3. Em Cliente responsável, escolha o cadastro e clique Associar cliente.
+4. Reabra Provisionamento se necessário. O histórico deve mostrar o nome do cliente nas ativações que estavam sem vínculo.
+
+IMPORTANTE: esta versão não envia comandos ao roteador durante a instalação. Só muda os arquivos da aplicação e, ao usar Associar cliente, atualiza o banco do RFN.

@@ -253,6 +253,81 @@ export type Database = {
         }
         Relationships: []
       }
+      personalization_profiles: {
+        Row: {
+          branding_method: string
+          company_name: string | null
+          config: Json
+          created_at: string
+          default_wifi_ssid_24: string | null
+          default_wifi_ssid_5: string | null
+          favicon_url: string | null
+          firmware_version: string | null
+          hardware_revision: string | null
+          id: string
+          logo_url: string | null
+          manufacturer: string
+          model: string
+          notes: string | null
+          package_reference: string | null
+          oem_compatibility_confirmed: boolean
+          persistence_strategy: string
+          profile_name: string
+          recovery_strategy: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          branding_method?: string
+          company_name?: string | null
+          config?: Json
+          created_at?: string
+          default_wifi_ssid_24?: string | null
+          default_wifi_ssid_5?: string | null
+          favicon_url?: string | null
+          firmware_version?: string | null
+          hardware_revision?: string | null
+          id?: string
+          logo_url?: string | null
+          manufacturer: string
+          model: string
+          notes?: string | null
+          package_reference?: string | null
+          oem_compatibility_confirmed?: boolean
+          persistence_strategy?: string
+          profile_name: string
+          recovery_strategy?: string
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          branding_method?: string
+          company_name?: string | null
+          config?: Json
+          created_at?: string
+          default_wifi_ssid_24?: string | null
+          default_wifi_ssid_5?: string | null
+          favicon_url?: string | null
+          firmware_version?: string | null
+          hardware_revision?: string | null
+          id?: string
+          logo_url?: string | null
+          manufacturer?: string
+          model?: string
+          notes?: string | null
+          package_reference?: string | null
+          oem_compatibility_confirmed?: boolean
+          persistence_strategy?: string
+          profile_name?: string
+          recovery_strategy?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       work_orders: {
         Row: {
           created_at: string
