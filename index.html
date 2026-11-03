@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>RFN_Personalizar-roteadores — Central do Provedor</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Inter, Arial, sans-serif;
+      background: #0b1220;
+      color: #e8eef7;
+      display: flex;
+      min-height: 100vh;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      box-sizing: border-box
+    }
+
+    .fallback {
+      max-width: 460px;
+      text-align: center;
+      border: 1px solid #263650;
+      border-radius: 12px;
+      padding: 24px;
+      background: #111a2b
+    }
+
+    .fallback h1 {
+      font-size: 18px;
+      margin: 0 0 10px
+    }
+
+    .fallback p {
+      color: #93a4bd;
+      font-size: 13px;
+      line-height: 1.6;
+      margin: 0 0 16px
+    }
+
+    .fallback a {
+      display: inline-block;
+      padding: 10px 16px;
+      border-radius: 8px;
+      background: #3b82f6;
+      color: #fff;
+      text-decoration: none;
+      font-weight: 700
+    }
+  </style>
+</head>
+
+<body>
+  <div class="fallback" id="fallback" hidden>
+    <h1>Central do Provedor</h1>
+    <p>Não foi possível carregar o painel automaticamente.</p>
+    <a href="./frontend/index.html">Abrir o painel</a>
+  </div>
+  <script>
+    // Entrada da raiz exigida pelo build/preview. O painel real fica em
+    // frontend/index.html e seus scripts usam caminhos absolutos a partir da
+    // raiz do host, por isso o HTML é carregado e os caminhos são reajustados
+    // para a pasta frontend/ antes de assumir o documento.
+    (function () {
+      function rewrite(html) {
+        return html
+          .replace(/(src|href)="(?!https?:|\/\/|\/frontend\/|data:|#)(\.?\/?)/g, '$1="/frontend/')
+          .replace(/"\/app\.js/g, '"/frontend/app.js');
+      }
+
+      function showFallback() {
+        var fallback = document.getElementById("fallback");
+        if (fallback) fallback.hidden = false;
+      }
+
+      fetch("./frontend/index.html", { cache: "no-store" })
+        .then(function (response) {
+          if (!response.ok) throw new Error("HTTP " + response.status);
+          return response.text();
+        })
+        .then(function (html) {
+          document.open();
+          document.write(rewrite(html));
+          document.close();
+        })
+        .catch(function (error) {
+          console.error("Falha ao carregar o painel:", error);
+          showFallback();
+        });
+    })();
+  </script>
+</body>
+
+</html>
