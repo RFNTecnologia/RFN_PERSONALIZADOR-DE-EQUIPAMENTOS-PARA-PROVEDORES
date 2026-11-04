@@ -73,6 +73,9 @@ if (-not (Get-EnvValue "DATABASE_URL") -and -not (Get-EnvValue "SUPABASE_DB_URL"
 if (-not (Get-EnvValue "MONGO_ROOT_PASSWORD")) {
     Set-EnvValue "MONGO_ROOT_PASSWORD" (New-RandomHex 24)
 }
+if (-not (Get-EnvValue "POSTGRES_PASSWORD")) {
+    Set-EnvValue "POSTGRES_PASSWORD" (New-RandomHex 24)
+}
 if (-not (Get-EnvValue "REDIS_PASSWORD")) {
     Set-EnvValue "REDIS_PASSWORD" (New-RandomHex 24)
 }
@@ -102,5 +105,6 @@ if ($RotateAdminCredentials) {
 [System.IO.File]::WriteAllLines($envPath, $lines, [System.Text.UTF8Encoding]::new($false))
 Write-Output "Configuração local salva sem exibir segredos. Usuário administrativo: $(Get-EnvValue 'API_ADMIN_USERNAME')."
 Write-Output "Segredos de MongoDB, Redis, GenieACS e sessão foram criados/preservados no .env."
+Write-Output "Senhas dos bancos PostgreSQL local e serviços foram criadas/preservadas no .env."
 Write-Output "A autenticação do painel usa o usuário e a senha cadastrados em Supabase Auth; promova o perfil para role=admin."
 Write-Output "CPE_ADMIN_PASSWORD foi armazenada no .env e não é exibida."
