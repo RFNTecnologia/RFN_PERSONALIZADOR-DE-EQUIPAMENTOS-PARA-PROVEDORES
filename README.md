@@ -52,21 +52,29 @@ No Supabase Dashboard, crie um usuário em Authentication → Users e depois pro
 
 ## Produção com HTTPS
 
-Configure DNS para o servidor e obtenha um certificado TLS. Coloque a cadeia em `certs/fullchain.pem` e a chave privada em `certs/privkey.pem`; a pasta `certs/` é ignorada pelo Git. Depois valide e inicie com o overlay:
+Produção só deve ser habilitada depois de definir o domínio e o servidor, substituir e rotacionar todas as credenciais que já tenham sido publicadas, configurar backups externos e testar a recuperação e os CPEs em laboratório. O `.env` contém credenciais e deve permanecer apenas no servidor; não o envie por chat nem o versione.
+
+1. No servidor, clone o repositório, copie `.env.example` para `.env`, preencha os dados do Supabase e do PostgreSQL operacional e execute `.\scripts\bootstrap-local.ps1` para gerar segredos ausentes.
+2. Aponte o DNS do domínio para o servidor e configure `server_name` nos dois blocos de `nginx/nginx.production.conf` com o domínio real.
+3. Obtenha um certificado TLS (por exemplo, Let's Encrypt) e coloque a cadeia em `certs/fullchain.pem` e a chave privada em `certs/privkey.pem`. A pasta `certs/` é ignorada pelo Git.
+4. Configure o firewall para permitir somente `80`, `443` e `7547` conforme a necessidade. A porta CWMP `7547` ainda não usa TLS nesta configuração; mantenha-a restrita às redes dos CPEs e não anuncie um ACS URL `https://` sem implementar e validar TLS para CWMP.
+5. Execute a validação de pré-requisitos e só então suba os serviços:
 
 ```powershell
+.\scripts\validate-production.ps1 -Domain "painel.seudominio.com.br"
 docker compose -f docker-compose.yml -f docker-compose.production.yml config
 docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --build
 ```
 
-O overlay redireciona HTTP para HTTPS e ativa cookies `Secure`. Sem os arquivos de certificado o Nginx de produção não inicia. No firewall, libere apenas `80`, `443` e `7547` conforme a necessidade. O NBI `7557`, File Server `7567`, UI interna `3000`, MongoDB, Redis e PostgreSQL não são publicados no host.
+O overlay redireciona HTTP para HTTPS e ativa cookies `Secure`. Sem os arquivos de certificado o Nginx de produção não inicia. O NBI `7557`, File Server `7567`, UI interna `3000`, MongoDB, Redis e PostgreSQL não são publicados no host.
 
-O TLS administrativo está preparado; o endpoint CWMP `7547` ainda não recebe certificado TLS nesta configuração. Não anuncie `https://` no ACS URL até configurar e testar TLS para CWMP no GenieACS/CPE. Restrinja a porta CWMP por firewall às redes dos CPEs sempre que possível.
+O script de validação verifica somente pré-requisitos locais; não comprova DNS público, renovação de certificado, rotação de credenciais comprometidas, backups fora do servidor, recuperação, segurança do MikroTik ou compatibilidade de CPEs. A instalação não deve ser considerada liberada até concluir esses testes.
 
 ## Checklist de liberação
 
 - [ ] `docker compose config` e `docker compose ... config` com overlay de produção terminam sem erro.
 - [ ] Segredos exclusivos definidos no `.env`; o arquivo não é versionado nem incluído em imagens.
+- [ ] Credenciais previamente publicadas foram rotacionadas nos serviços de origem e o histórico Git foi tratado.
 - [ ] DNS, certificado, renovação do certificado e firewall conferidos.
 - [ ] Login, logout, bloqueio de API anônima e bloqueio da UI GenieACS anônima testados.
 - [ ] `/health`, healthcheck da API, logs e alertas operacionais verificados.

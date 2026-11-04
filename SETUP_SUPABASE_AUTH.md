@@ -11,7 +11,7 @@
 
 ## Configurar
 1. Faça backup e atualize os arquivos na pasta original do projeto.
-2. Copie `.env.example` para `.env`, se ainda não existir. A URL e a publishable key do projeto RFN já estão preenchidas no modelo.
+2. Copie `.env.example` para `.env`, se ainda não existir. O modelo não contém credenciais; configure `SUPABASE_URL` e `SUPABASE_PUBLISHABLE_KEY` usando os valores do mesmo projeto exibidos em `frontend/index.html`.
 3. Mantenha `DATABASE_URL` apontando para o PostgreSQL operacional que já contém os dados do RFN. Os perfis/Auth são consultados no projeto Supabase indicado por `SUPABASE_URL`; não é obrigatório mover os dados operacionais para o banco remoto só para usar Supabase Auth. Não use a publishable key como senha do banco e não compartilhe a senha do banco no chat.
 4. Confirme que `SUPABASE_URL` e `SUPABASE_PUBLISHABLE_KEY` no `.env` pertencem ao mesmo projeto configurado em `frontend/index.html`. Neste pacote, o frontend está configurado para o projeto RFN `fhlwmpeakyxrvnzwyiwv`.
 5. Execute `./scripts/bootstrap-local.ps1` no PowerShell para gerar os segredos locais ausentes, depois valide `docker compose config -q`.
