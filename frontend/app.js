@@ -42,15 +42,36 @@ async function api(url, opt = {}) {
 
 let authSession = null;
 try { authSession = JSON.parse(localStorage.getItem('rfn_supabase_session') || 'null'); } catch { authSession = null; }
+let sessionRefreshPromise = null;
 
 async function ensureFreshSession() {
   if (!authSession?.refresh_token) return;
   const expiresAt = Number(authSession.expires_at || 0);
   if (expiresAt && expiresAt > Math.floor(Date.now() / 1000) + 60) return;
-  const data = await supabaseAuth('token?grant_type=refresh_token', { refresh_token: authSession.refresh_token });
-  authSession = { ...data, expires_at: Math.floor(Date.now() / 1000) + Number(data.expires_in || 3600) };
-  localStorage.setItem('rfn_supabase_session', JSON.stringify(authSession));
-  await syncAuthCookie(authSession);
+  if (!sessionRefreshPromise) {
+    sessionRefreshPromise = (async () => {
+      try {
+        const data = await supabaseAuth('token?grant_type=refresh_token', { refresh_token: authSession.refresh_token });
+        authSession = { ...data, expires_at: Math.floor(Date.now() / 1000) + Number(data.expires_in || 3600) };
+        localStorage.setItem('rfn_supabase_session', JSON.stringify(authSession));
+        await syncAuthCookie(authSession);
+      } catch (error) {
+        const message = String(error?.message || '').toLowerCase();
+        if (!message.includes('invalid refresh token') && !message.includes('refresh token not found')) throw error;
+
+        localStorage.removeItem('rfn_supabase_session');
+        authSession = null;
+        const response = await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+        if (!response.ok) throw new Error('Não foi possível encerrar a sessão expirada.');
+        await requestLogin();
+      }
+    })();
+  }
+  try {
+    await sessionRefreshPromise;
+  } finally {
+    sessionRefreshPromise = null;
+  }
 }
 
 async function syncAuthCookie(session) {
